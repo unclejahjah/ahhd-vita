@@ -1273,6 +1273,7 @@ void as_gc(AsVm *vm) {
     double t0 = AS_ENV("AS_GCTIME") ? as_time_ms() : 0;
     as_mark_obj(vm, vm->global);
     if (vm->root) as_mark_obj(vm, &vm->root->obj);
+    if (vm->overlay) as_mark_obj(vm, &vm->overlay->obj);
     AsObj *protos[] = {vm->object_proto, vm->function_proto, vm->array_proto, vm->string_proto, vm->number_proto,
                        vm->boolean_proto, vm->mc_proto, vm->color_proto, vm->sound_proto};
     for (size_t i = 0; i < sizeof protos / sizeof *protos; i++) as_mark_obj(vm, protos[i]);

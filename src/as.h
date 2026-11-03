@@ -186,6 +186,7 @@ struct AsVm {
     AsVal global_regs[4];
     AsObj *global;              // _global
     AsMc *root;                 // _level0
+    AsMc *overlay;              // a second movie drawn over the root (AH's menu/pause layer), or NULL
     AsObj *object_proto, *function_proto, *array_proto, *string_proto, *number_proto,
           *boolean_proto, *mc_proto, *color_proto, *sound_proto;
     AsStr *empty;               // ""
