@@ -612,7 +612,12 @@ AsVal as_mc_get_prop(AsVm *vm, AsMc *mc, int i) {
 
 void as_mc_set_prop(AsVm *vm, AsMc *mc, int i, AsVal v) {
     double n = as_tonum(vm, v);
-    if (isnan(n) && i != 7 && i != 13) return;
+    if (AS_ENV("AS_WATCHPROP") && mc->name && !strcasecmp(mc->name->s, AS_ENV("AS_WATCHPROP")))
+        as_warn(vm, "tick %u: %s prop %d = %s (type %d) in %s", vm->tick, mc->name->s, i, as_tostr(vm, v)->s, v.t,
+                vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "timeline");
+    // undefined, like NaN, leaves a number property as it is (f_AlienNotDriving sets the cars'
+    // body._y from a body_y not yet saved; as 0 the body sat on the ground, above its wheels)
+    if ((isnan(n) || v.t == V_UNDEF) && i != 7 && i != 13) return;
     switch (i) {
     case 0: mc->m.tx = (float)(n * 20); mc->scripted = 1; break;
     case 1: mc->m.ty = (float)(n * 20); mc->scripted = 1; break;

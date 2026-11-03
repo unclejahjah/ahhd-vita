@@ -708,7 +708,7 @@ static int as_mode(int argc, char **argv) {
                 AsMc *mc = (AsMc *)v.o;
                 printf("  [children %d]", f);
                 for (int i = 0; i < mc->ndisp; i++)
-                    if (mc->disp[i].mc && mc->disp[i].mc->name) printf(" %s", mc->disp[i].mc->name->s);
+                    if (mc->disp[i].mc && mc->disp[i].mc->name) printf(" %s#%d@%.1f,%.1f", mc->disp[i].mc->name->s, mc->disp[i].cid, mc->disp[i].mc->m.tx / 20, mc->disp[i].mc->m.ty / 20);
                 printf("\n");
             }
         }
