@@ -30,7 +30,7 @@ Other data, not used yet:
 
 ```
 gcc -O2 -Ithird_party/libtess2/Include -o hosttest tools/hosttest.c \
-  src/ah_view.c src/swf.c src/render.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c \
+  src/ah_host.c src/ah_view.c src/swf.c src/render.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c \
   src/cc_host.c src/cc_native.c src/hostfont.c src/strtab.c src/cc_buttons.c \
   src/level.c src/player.c src/enemy.c third_party/libtess2/Source/*.c -lm -lz
 
