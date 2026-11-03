@@ -701,6 +701,17 @@ static int as_mode(int argc, char **argv) {
             }
             printf("\n");
         }
+        if (getenv("AS_CHILDREN") && getenv("AS_TRACE_EVERY") && f % atoi(getenv("AS_TRACE_EVERY")) == 0) {
+            int found;   // AS_CHILDREN=path: the named clips in it
+            AsVal v = as_resolve_path(vm, vm->root, getenv("AS_CHILDREN"), &found);
+            if (found && v.t == V_OBJ && v.o->type == OBJ_MC) {
+                AsMc *mc = (AsMc *)v.o;
+                printf("  [children %d]", f);
+                for (int i = 0; i < mc->ndisp; i++)
+                    if (mc->disp[i].mc && mc->disp[i].mc->name) printf(" %s", mc->disp[i].mc->name->s);
+                printf("\n");
+            }
+        }
         if (prof_from >= 0) {
             prof_ms += ms;
             prof_ops += vm->ops - ops0;

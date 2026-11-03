@@ -5,6 +5,7 @@
 #include "cc_host.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 void (*ah_log)(const char *line);
@@ -191,6 +192,9 @@ const char *ah_tick(AsVm *vm) {
     set_root(vm, m);
     vm->overlay = NULL;
     ah_paused = 0;
+    // the menus and game-over screens set g_bNoPause; a new movie starts pausable (the
+    // levels never clear it themselves)
+    cc_set_flash_global(vm, "g_bNoPause", as_num(0));
     return changed;
 }
 
@@ -206,6 +210,43 @@ static AsVal ChangeMovie(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+
+// ---- the game's words -------------------------------------------------------------
+// Text fields ask for string N ("ntext = N"). The exe had the table; pause.pak carries the
+// same table as f_GetText(N) in its second frame, which only runs when the movie is played
+// outside the game (console_version false). That frame's script is run once on a clip of
+// its own, nowhere in the display, so its test stubs stay out of the game's way; then
+// f_GetText answers for the exe. Answers are kept.
+
+#define MAX_TEXT 1024
+static char *texts[MAX_TEXT];
+static AsMc *text_clip;
+static int text_tried;
+
+static const char *text_for_number(AsVm *vm, int n) {
+    if (n <= 0 || n >= MAX_TEXT) return NULL;
+    if (texts[n]) return texts[n];
+    if (!text_tried) {
+        text_tried = 1;
+        Movie *m = vm->loader(vm, "pause.pak");
+        for (int i = 0; m && i < m->root.nactions; i++)
+            if (m->root.actions[i].frame == 1) {
+                text_clip = as_mc_new(vm, m, &m->root, NULL, 0);
+                // kept alive through _global
+                as_set(vm, as_objv(vm->global), as_atom(vm, "__ah_text_clip"), as_objv(&text_clip->obj));
+                as_run_block(vm, m, m->root.actions[i].off, m->root.actions[i].len, text_clip);
+                break;
+            }
+    }
+    if (!text_clip) return NULL;
+    AsVal fn = as_get(vm, as_objv(&text_clip->obj), as_atom(vm, "f_GetText"));
+    if (fn.t != V_OBJ) return NULL;
+    AsVal arg = as_num(n);
+    AsVal r = as_call(vm, fn, as_objv(&text_clip->obj), 1, &arg);
+    if (r.t != V_STR) return NULL;
+    texts[n] = strdup(as_tostr(vm, r)->s);
+    return texts[n];
+}
 
 // GetInputBinding(b): which button an action is on, for the button glyphs. b.s_action is the
 // action ("menu_select", "jump"...); the answer goes in b.s_device and b.s_button, which
@@ -244,9 +285,10 @@ static AsVal SetTextToGamerTag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
-static AsVal ret_one(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+// GetTextLocalizationScale(N): the _xscale (percent) string N needs to fit; English fits.
+static AsVal ret_hundred(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
-    return as_num(1);
+    return as_num(100);
 }
 
 // The scripts compare this with "xbox", "xboxone", "switch" and "steam" to pick
@@ -262,10 +304,11 @@ void ah_host_init(AsVm *vm) {
     // levels then take the game's real paths, pause.pak skips its Flash-test stubs). The
     // pins cc_host made for Castle Crashers' own functions don't apply here.
     vm->npinned = 0;
+    vm->text_for_number = text_for_number;
     as_pin(vm, "console_version", as_bool(1), NULL);
     as_def_fn(vm, g, "Get480Mode", ret_false);
     as_def_fn(vm, g, "GetInputBinding", GetInputBinding);
-    as_def_fn(vm, g, "GetTextLocalizationScale", ret_one);          // 16:9 output
+    as_def_fn(vm, g, "GetTextLocalizationScale", ret_hundred);          // 16:9 output
     as_def_fn(vm, g, "GetPlatformType", get_platform_type);
     as_def_fn(vm, g, "MEMCARD_Seek", memcard_seek);
     as_def_fn(vm, g, "MEMCARD_Read", memcard_read);
