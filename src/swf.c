@@ -761,6 +761,55 @@ const Place *frame_find_name(const Movie *m, const Frame *f, const char *name) {
 
 // ---- movie -------------------------------------------------------------------
 
+static uint32_t rd32(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24); }
+static uint16_t rd16(const uint8_t *p) { return p[0] | (p[1] << 8); }
+
+// Alien Hominid HD keeps each movie as data/game/NAME.pak or data/levels/NAME.pak:
+// a ZIP holding one NAME.COK6.BREC (or .PDAG.BREC) record. The record is a 160-byte
+// header (u64 offset at 0x20, u64 size at 0x28, offset is 0xa0 so far) followed by a
+// plain uncompressed SWF. This turns either wrapper into the bare SWF bytes in place.
+// Plain SWFs pass through unchanged. Returns 0 (with err set) on a malformed file.
+int brec_unwrap(uint8_t **data, long *len, char *err, int errlen) {
+    uint8_t *d = *data;
+    long n = *len;
+    if (n >= 30 && rd32(d) == 0x04034b50) {             // ZIP local file header
+        int method = rd16(d + 8);
+        uint32_t csize = rd32(d + 18), usize = rd32(d + 22);
+        long start = 30 + rd16(d + 26) + rd16(d + 28);
+        if (start + (long)csize > n) { snprintf(err, errlen, "ZIP entry runs past the end of the file"); return 0; }
+        uint8_t *out = malloc(usize ? usize : 1);
+        if (method == 0 && csize == usize) {
+            memcpy(out, d + start, usize);
+        } else if (method == 8) {                         // deflate, in case a build compresses
+            z_stream z = {0};
+            z.next_in = d + start; z.avail_in = csize;
+            z.next_out = out; z.avail_out = usize;
+            int ok = inflateInit2(&z, -15) == Z_OK && inflate(&z, Z_FINISH) == Z_STREAM_END;
+            inflateEnd(&z);
+            if (!ok) { free(out); snprintf(err, errlen, "Can't inflate ZIP entry"); return 0; }
+        } else {
+            free(out); snprintf(err, errlen, "Unsupported ZIP method %d", method); return 0;
+        }
+        free(d);
+        d = out; n = usize;
+    }
+    if (n >= 0x30 && !(d[0] == 'F' && d[1] == 'W' && d[2] == 'S')) {   // BREC record
+        uint32_t off = rd32(d + 0x20), size = rd32(d + 0x28);
+        if (rd32(d + 0x24) || rd32(d + 0x2c) || off + 8 > (uint32_t)n || memcmp(d + off, "FWS", 3)) {
+            snprintf(err, errlen, "Not a SWF, ZIP or BREC record");
+            *data = d; *len = n;
+            return 0;
+        }
+        uint32_t declared = rd32(d + off + 4);
+        if (size > (uint32_t)n - off) size = (uint32_t)n - off;
+        if (declared && declared < size) size = declared;   // the record pads the SWF by a byte
+        memmove(d, d + off, size);
+        n = size;
+    }
+    *data = d; *len = n;
+    return 1;
+}
+
 Movie *swf_load(const char *path, char *err, int errlen) {
     FILE *f = fopen(path, "rb");
     if (!f) { snprintf(err, errlen, "Can't open %s", path); return NULL; }
@@ -770,6 +819,7 @@ Movie *swf_load(const char *path, char *err, int errlen) {
     uint8_t *d = malloc(len);
     if (fread(d, 1, len, f) != (size_t)len) { fclose(f); free(d); snprintf(err, errlen, "Read failed"); return NULL; }
     fclose(f);
+    if (!brec_unwrap(&d, &len, err, errlen)) { free(d); return NULL; }
     if (len < 16 || d[0] != 'F' || d[1] != 'W' || d[2] != 'S') {
         free(d);
         snprintf(err, errlen, "%s is not an uncompressed SWF", path);
