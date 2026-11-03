@@ -19,17 +19,20 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall -std=gnu11")
 
 include_directories(third_party/libtess2/Include)
 
-# Default: the Alien Hominid HD animation viewer (src/ah_viewer.c).
-# -DAH_VIEWER=OFF -DCC_VIEWER=ON: cc-vita's Castle Crashers viewer.
-# -DAH_VIEWER=OFF: cc-vita's ActionScript front end (still Castle Crashers').
-option(AH_VIEWER "build the Alien Hominid HD animation viewer" ON)
+# Default: the game (src/ah_main.c), running the game's own scripts.
+# -DAH_VIEWER=ON: the Alien Hominid HD animation viewer (src/ah_viewer.c).
+# -DCC_VIEWER=ON / -DCC_GAME=ON: cc-vita's Castle Crashers viewer / front end.
+option(AH_VIEWER "build the Alien Hominid HD animation viewer" OFF)
 option(CC_VIEWER "build the Castle Crashers level and animation viewer" OFF)
+option(CC_GAME "build cc-vita's Castle Crashers front end" OFF)
 if(AH_VIEWER)
   set(APP_SOURCES src/ah_viewer.c src/ah_view.c)
 elseif(CC_VIEWER)
   set(APP_SOURCES src/viewer.c src/level.c src/player.c src/enemy.c)
-else()
+elseif(CC_GAME)
   set(APP_SOURCES src/main.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/audio.c src/strtab.c src/cc_buttons.c)
+else()
+  set(APP_SOURCES src/ah_main.c src/ah_host.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/strtab.c src/cc_buttons.c)
 endif()
 
 add_executable(${PROJECT_NAME}
