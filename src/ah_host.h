@@ -15,6 +15,11 @@ const char *ah_tick(AsVm *vm);
 int ah_request_pause(AsVm *vm, int port);
 extern int ah_paused;
 extern float ah_background_alpha;
+// sound, set by the front end: pause/resume music, volumes 0..1 (negative: unchanged),
+// stop every sound effect
+extern void (*ah_music_pause)(int paused);
+extern void (*ah_audio_volumes)(float music, float sfx);
+extern void (*ah_sfx_stop_all)(void);
 extern void (*ah_log)(const char *line);   // optional: where logged calls go
 
 #endif

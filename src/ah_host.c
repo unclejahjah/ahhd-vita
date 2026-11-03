@@ -47,9 +47,6 @@ LOGGED(LoginToOnlineAccount, as_bool(0))
 LOGGED(ListenForKeyBinding, as_undef())
 LOGGED(ResetKeyBindings, as_undef())
 LOGGED(ChangeVideoSettings, as_undef())
-LOGGED(SetMusicVolume, as_undef())
-LOGGED(SetSfxVolume, as_undef())
-LOGGED(PauseMusic, as_undef())
 
 #define ARG(i) ((i) < argc ? argv[i] : as_undef())
 
@@ -122,11 +119,40 @@ static AsVal TurnMainMenuOn(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+// ---- sound: the front end plays it (audio.c on the Vita) -----------------------------
+void (*ah_music_pause)(int paused);
+void (*ah_audio_volumes)(float music, float sfx);
+void (*ah_sfx_stop_all)(void);
+
+static void music_pause(int paused) {
+    if (ah_music_pause) ah_music_pause(paused);
+}
+
+// PauseMusic(paused): the pause menu resumes the music with PauseMusic(false)
+static AsVal PauseMusic(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    music_pause(as_tobool(vm, ARG(0)));
+    return as_undef();
+}
+
+// SetMusicVolume(0..100), SetSfxVolume(0..100), from the options menu
+static AsVal SetMusicVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    if (ah_audio_volumes) ah_audio_volumes((float)as_tonum(vm, ARG(0)) / 100, -1);
+    return as_undef();
+}
+static AsVal SetSfxVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    if (ah_audio_volumes) ah_audio_volumes(-1, (float)as_tonum(vm, ARG(0)) / 100);
+    return as_undef();
+}
+
 static AsVal UnPause(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     log_call(vm, "UnPause", argc, argv);
     ah_paused = 0;
     overlay_close = 1;
+    music_pause(0);
     return as_undef();
 }
 
@@ -148,6 +174,7 @@ int ah_request_pause(AsVm *vm, int port) {
     cc_set_flash_global(vm, "g_nPausePlayer", as_num(port));
     open_overlay(vm, 1);
     ah_paused = 1;
+    music_pause(1);
     return 1;
 }
 
@@ -189,6 +216,9 @@ const char *ah_tick(AsVm *vm) {
     ah_next_movie[0] = 0;
     Movie *m = vm->loader(vm, changed);
     if (!m) return NULL;
+    // as in Flash, a new root movie silences the old one's sounds (car engines loop)
+    if (ah_sfx_stop_all) ah_sfx_stop_all();
+    music_pause(0);
     set_root(vm, m);
     vm->overlay = NULL;
     ah_paused = 0;

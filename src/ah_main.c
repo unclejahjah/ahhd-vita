@@ -24,6 +24,7 @@
 #include "as.h"
 #include "as_render.h"
 #include "ah_host.h"
+#include "audio.h"
 #include "cc_host.h"
 #include "hostfont.h"
 #include "render.h"
@@ -448,6 +449,23 @@ static void load_font(void) {
     as_render_set_font(font);
 }
 
+static void vita_sound_start(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner) {
+    (void)vm;
+    audio_sfx_play(linkage, volume, pan, loops, owner);
+}
+
+static void vita_sound_stop(AsVm *vm, const void *owner) {
+    (void)vm;
+    audio_sfx_stop(owner);
+}
+
+static void vita_sound_set(AsVm *vm, const void *owner, float volume, float pan) {
+    (void)vm;
+    audio_sfx_set(owner, volume, pan);
+}
+
+static void stop_all_sfx(void) { audio_sfx_stop(NULL); }
+
 int main(void) {
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
@@ -475,8 +493,18 @@ int main(void) {
     AsVm *vm = as_new(vita_loader);
     vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;
     vm->warn = vita_warn;
+    vm->sound_start = vita_sound_start;
+    vm->sound_stop = vita_sound_stop;
+    vm->sound_set = vita_sound_set;
     cc_host_init(vm);
     ah_host_init(vm);
+    // the PC copy's data/sounds and data/music; the game runs silent without them
+    audio_init(DATA_DIR);
+    cc_music_play = audio_music_play;
+    cc_music_stop = audio_music_stop;
+    ah_music_pause = audio_music_pause;
+    ah_audio_volumes = audio_set_volumes;
+    ah_sfx_stop_all = stop_all_sfx;
     as_render_init(vm);
     if (!ah_start(vm, "legal.pak")) {
         SceCtrlData pad;
@@ -580,6 +608,7 @@ int main(void) {
         }
     }
 
+    audio_shutdown();
     vita2d_wait_rendering_done();
     as_free(vm);
     for (int i = 0; i < g_nmovies; i++) {

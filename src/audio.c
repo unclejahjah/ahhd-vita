@@ -1,6 +1,6 @@
 #include "audio.h"
 
-#include <mpg123.h>
+#include "msadpcm.h"
 #include <psp2/audioout.h>
 #include <psp2/kernel/threadmgr.h>
 #include <stdint.h>
@@ -9,8 +9,8 @@
 #include <string.h>
 #include <strings.h>
 
-#define OUT_RATE 44100
-#define OUT_FRAMES 1024            // per output block (~23 ms)
+#define OUT_RATE 48000             // the music's rate
+#define OUT_FRAMES 1024            // per output block (~21 ms)
 #define MAX_SFX 512
 #define MAX_VOICES 32
 #define CACHE_BYTES (24 * 1024 * 1024)   // decoded sound effects kept in memory (of the 160 MB heap)
@@ -49,50 +49,29 @@ static SceUID g_mix_thread = -1, g_load_thread = -1, g_load_sema = -1;
 // music, owned by the mixer thread (requests come through these)
 static char g_music_req[64];
 static volatile int g_music_req_loop, g_music_req_seq;
-static mpg123_handle *g_music;
+static Adpcm g_music;              // g_music.f: playing
 static int g_music_loop, g_music_rate;
+static volatile int g_music_paused;
+static volatile float g_music_vol = 1, g_sfx_vol = 1;
 static char g_music_path[192];
 
 static void lock(void) { sceKernelLockLwMutex(&g_lock, 1, NULL); }
 static void unlock(void) { sceKernelUnlockLwMutex(&g_lock, 1); }
 
-static mpg123_handle *open_mp3(const char *path, long *rate) {
-    int err;
-    mpg123_handle *h = mpg123_new(NULL, &err);
-    if (!h) return NULL;
-    mpg123_param(h, MPG123_ADD_FLAGS, MPG123_FORCE_STEREO | MPG123_QUIET, 0);
-    if (mpg123_open(h, path) != MPG123_OK) { mpg123_delete(h); return NULL; }
-    int ch, enc;
-    if (mpg123_getformat(h, rate, &ch, &enc) != MPG123_OK) { mpg123_close(h); mpg123_delete(h); return NULL; }
-    mpg123_format_none(h);
-    mpg123_format(h, *rate, MPG123_STEREO, MPG123_ENC_SIGNED_16);
-    return h;
-}
-
 // ---- sound effects: decoded whole on the loader thread ------------------------------
 
 static void decode_sfx(Sfx *s) {
     char path[256];
-    snprintf(path, sizeof path, "%ssfx/%s.mp3", g_dir, s->name);
-    long rate;
-    mpg123_handle *h = open_mp3(path, &rate);
-    if (!h) { s->state = SFX_FAILED; return; }
-    size_t cap = 65536, n = 0;   // frames
-    int16_t *pcm = malloc(cap * 4);
-    for (;;) {
-        if (n + 4096 > cap) {
-            cap *= 2;
-            int16_t *p = realloc(pcm, cap * 4);
-            if (!p) break;
-            pcm = p;
-        }
-        size_t got = 0;
-        int r = mpg123_read(h, (unsigned char *)(pcm + n * 2), 4096 * 4, &got);
-        n += got / 4;
-        if (r != MPG123_OK && r != MPG123_NEW_FORMAT) break;
-    }
-    mpg123_close(h);
-    mpg123_delete(h);
+    snprintf(path, sizeof path, "%ssounds/%s.adpcm", g_dir, s->name);
+    Adpcm a;
+    if (!adpcm_open(&a, path)) { s->state = SFX_FAILED; return; }
+    long total = adpcm_total_frames(&a);
+    int16_t *pcm = malloc((size_t)(total + a.spb) * 4);
+    size_t n = 0;
+    int got;
+    while (pcm && (got = adpcm_read_block(&a, pcm + n * 2)) > 0) n += got;
+    long rate = a.rate;
+    adpcm_close(&a);
     if (!n) { free(pcm); s->state = SFX_FAILED; return; }
     lock();
     s->pcm = pcm;
@@ -130,42 +109,42 @@ static int load_thread(SceSize args, void *argp) {
 
 // ---- mixing ------------------------------------------------------------------------
 
+static void music_close(void) {
+    if (g_music.f) adpcm_close(&g_music);
+}
+
 static void music_open(void) {
-    if (g_music) { mpg123_close(g_music); mpg123_delete(g_music); g_music = NULL; }
-    long rate;
-    g_music = open_mp3(g_music_path, &rate);
-    g_music_rate = (int)rate;
+    music_close();
+    if (!adpcm_open(&g_music, g_music_path)) return;
+    g_music_rate = g_music.rate;
 }
 
 // Adds up to n frames of music at the output rate into mix.
 static void mix_music(int32_t *mix, int n) {
-    static int16_t buf[OUT_FRAMES * 2 * 2 + 8];
-    static int have, used;           // frames in buf, frames consumed
+    static int16_t buf[(512 + 4) * 2];   // decoded frames: one block (and two kept)
+    static int have, used;               // frames in buf, frames consumed
     static double frac;
-    if (!g_music) { have = used = 0; frac = 0; return; }
+    if (!g_music.f) { have = used = 0; frac = 0; return; }
+    if (g_music_paused) return;
     double step = (double)g_music_rate / OUT_RATE;
+    float vol = MUSIC_VOLUME * g_music_vol;
     for (int i = 0; i < n; i++) {
         while (used + 1 >= have) {   // keep two frames to interpolate between
             int keep = have - used;
             if (keep > 0) memmove(buf, buf + used * 2, keep * 4);
             have = keep > 0 ? keep : 0;
             used = 0;
-            size_t got = 0;
-            int r = mpg123_read(g_music, (unsigned char *)(buf + have * 2), (OUT_FRAMES * 2 - have) * 4, &got);
-            have += got / 4;
-            if (r == MPG123_NEW_FORMAT) continue;
-            if (r == MPG123_DONE || (r != MPG123_OK && !got)) {
-                if (g_music_loop && mpg123_seek(g_music, 0, SEEK_SET) >= 0) continue;
-                mpg123_close(g_music);
-                mpg123_delete(g_music);
-                g_music = NULL;
-                return;
-            }
+            int got = g_music.spb <= 512 ? adpcm_read_block(&g_music, buf + have * 2) : 0;
+            if (got > 0) { have += got; continue; }
+            if (g_music_loop && g_music.data_size) { adpcm_rewind(&g_music); continue; }
+            music_close();
+            have = used = 0;
+            return;
         }
         float t = (float)frac;
         for (int c = 0; c < 2; c++) {
             float a = buf[used * 2 + c], b = buf[(used + 1) * 2 + c];
-            mix[i * 2 + c] += (int32_t)((a + (b - a) * t) * MUSIC_VOLUME);
+            mix[i * 2 + c] += (int32_t)((a + (b - a) * t) * vol);
         }
         frac += step;
         while (frac >= 1) { frac -= 1; used++; }
@@ -183,11 +162,11 @@ static int mix_thread(SceSize args, void *argp) {
             lock();
             music_seq = g_music_req_seq;
             int stop = !g_music_req[0];
-            snprintf(g_music_path, sizeof g_music_path, "%smusic/%s.mp3", g_dir, g_music_req);
+            snprintf(g_music_path, sizeof g_music_path, "%smusic/%s.adpcm", g_dir, g_music_req);
             g_music_loop = g_music_req_loop;
             unlock();
             if (stop) {
-                if (g_music) { mpg123_close(g_music); mpg123_delete(g_music); g_music = NULL; }
+                music_close();
             } else {
                 music_open();
             }
@@ -204,14 +183,15 @@ static int mix_thread(SceSize args, void *argp) {
                 continue;   // still decoding: starts when it's ready
             }
             double step = (double)s->rate / OUT_RATE;
+            float sv = g_sfx_vol;
             for (int i = 0; i < OUT_FRAMES; i++) {
                 int p = (int)vo->pos;
                 if (p >= s->frames) {
                     if (vo->loops > 0) { vo->loops--; vo->pos -= s->frames; p = (int)vo->pos; }
                     else { vo->active = 0; break; }
                 }
-                mix[i * 2] += (int32_t)(s->pcm[p * 2] * vo->vl);
-                mix[i * 2 + 1] += (int32_t)(s->pcm[p * 2 + 1] * vo->vr);
+                mix[i * 2] += (int32_t)(s->pcm[p * 2] * vo->vl * sv);
+                mix[i * 2 + 1] += (int32_t)(s->pcm[p * 2 + 1] * vo->vr * sv);
                 vo->pos += step;
             }
         }
@@ -230,7 +210,6 @@ static int mix_thread(SceSize args, void *argp) {
 
 int audio_init(const char *data_dir) {
     snprintf(g_dir, sizeof g_dir, "%s", data_dir);
-    if (mpg123_init() != MPG123_OK) return 0;
     g_port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, OUT_FRAMES, OUT_RATE, SCE_AUDIO_OUT_MODE_STEREO);
     if (g_port < 0) return 0;
     sceKernelCreateLwMutex(&g_lock, "cc_audio", 0, 0, NULL);
@@ -251,6 +230,14 @@ void audio_shutdown(void) {
     sceKernelWaitThreadEnd(g_load_thread, NULL, NULL);
     sceAudioOutReleasePort(g_port);
     g_port = -1;
+}
+
+static void set_gain(Voice *v, float volume, float pan) {
+    if (volume < 0) volume = 0;
+    if (pan < -1) pan = -1;
+    if (pan > 1) pan = 1;
+    v->vl = volume * (pan > 0 ? 1 - pan : 1);
+    v->vr = volume * (pan < 0 ? 1 + pan : 1);
 }
 
 void audio_sfx_play(const char *linkage, float volume, float pan, int loops, const void *owner) {
@@ -279,11 +266,8 @@ void audio_sfx_play(const char *linkage, float volume, float pan, int loops, con
     int v, best = 0;
     for (v = 0; v < MAX_VOICES && g_voices[v].active; v++) {}
     if (v == MAX_VOICES) v = best;
-    if (volume < 0) volume = 0;
-    if (pan < -1) pan = -1;
-    if (pan > 1) pan = 1;
-    g_voices[v] = (Voice){1, i, 0, volume * (pan > 0 ? 1 - pan : 1), volume * (pan < 0 ? 1 + pan : 1), loops > 1 ? loops - 1 : 0,
-                          owner};
+    g_voices[v] = (Voice){1, i, 0, 0, 0, loops > 1 ? loops - 1 : 0, owner};
+    set_gain(&g_voices[v], volume, pan);
     unlock();
 }
 
@@ -309,5 +293,19 @@ void audio_music_stop(void) {
     lock();
     g_music_req[0] = 0;
     g_music_req_seq++;
+    unlock();
+}
+
+void audio_music_pause(int paused) { g_music_paused = paused; }
+void audio_set_volumes(float music, float sfx) {
+    if (music >= 0) g_music_vol = music;
+    if (sfx >= 0) g_sfx_vol = sfx;
+}
+
+void audio_sfx_set(const void *owner, float volume, float pan) {
+    if (g_port < 0 || !owner) return;
+    lock();
+    for (int v = 0; v < MAX_VOICES; v++)
+        if (g_voices[v].active && g_voices[v].owner == owner) set_gain(&g_voices[v], volume, pan);
     unlock();
 }

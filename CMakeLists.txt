@@ -25,7 +25,7 @@ option(AH_VIEWER "build the Alien Hominid HD animation viewer" OFF)
 if(AH_VIEWER)
   set(APP_SOURCES src/ah_viewer.c src/ah_view.c)
 else()
-  set(APP_SOURCES src/ah_main.c src/ah_host.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/strtab.c src/cc_buttons.c)
+  set(APP_SOURCES src/ah_main.c src/ah_host.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/strtab.c src/cc_buttons.c src/audio.c src/msadpcm.c)
 endif()
 
 add_executable(${PROJECT_NAME}
@@ -46,7 +46,6 @@ target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/
 
 target_link_libraries(${PROJECT_NAME}
   vita2d
-  mpg123
   SceAudio_stub
   SceDisplay_stub
   SceGxm_stub

@@ -26,7 +26,7 @@ and ActionScript 1 from the user's PC copy on cc-vita's AVM1 engine.
    with `hosttest --as`.
 2. Replace cc_host.c's Castle Crashers natives with Alien Hominid's (list what the scripts call
    that nothing defines).
-3. Audio: WAV MS-ADPCM decoder in place of mpg123 MP3.
+3. Audio: done. src/msadpcm.c decodes the .adpcm WAVs (checked sample for sample against ffmpeg); audio.c mixes at 48 kHz.
 4. Text: `.dct` reader in place of strings_en.txt.
 5. Vita front end: data path `ux0:data/AlienHominidHD/`, then menus and input.
 6. Work out what `data/baf/*.baf` adds over the SWF shapes (HD outlines? textures?).

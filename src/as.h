@@ -204,6 +204,8 @@ struct AsVm {
     // Sound objects: play an attached sound (linkage name), stop what one object started
     void (*sound_start)(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner);
     void (*sound_stop)(AsVm *vm, const void *owner);
+    // optional: setVolume/setPan on a Sound that is playing (volume 0..1, pan -1..1)
+    void (*sound_set)(AsVm *vm, const void *owner, float volume, float pan);
     // each tick, after the frame scripts ran and before onEnterFrame (host work that needs
     // freshly placed clips to have run their first frame)
     void (*after_frame_scripts)(AsVm *vm);

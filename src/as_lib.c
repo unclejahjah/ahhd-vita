@@ -668,13 +668,23 @@ static AsVal sound_stop(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+static void sound_changed(AsVm *vm, AsObj *o) {
+    if (vm->sound_set) vm->sound_set(vm, o, (float)sound_num(o, A_vol, 100) / 100, (float)sound_num(o, A_pan, 0) / 100);
+}
+
 static AsVal sound_setvolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
-    if (this_.t == V_OBJ && argc) sound_set(vm, this_.o, A_vol, as_num(as_tonum(vm, argv[0])));
+    if (this_.t == V_OBJ && argc) {
+        sound_set(vm, this_.o, A_vol, as_num(as_tonum(vm, argv[0])));
+        sound_changed(vm, this_.o);
+    }
     return as_undef();
 }
 
 static AsVal sound_setpan(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
-    if (this_.t == V_OBJ && argc) sound_set(vm, this_.o, A_pan, as_num(as_tonum(vm, argv[0])));
+    if (this_.t == V_OBJ && argc) {
+        sound_set(vm, this_.o, A_pan, as_num(as_tonum(vm, argv[0])));
+        sound_changed(vm, this_.o);
+    }
     return as_undef();
 }
 
