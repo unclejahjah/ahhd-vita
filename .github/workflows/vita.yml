@@ -9,7 +9,7 @@ jobs:
   vpk:
     runs-on: ubuntu-latest
     env:
-      VITASDK: ${{ github.workspace }}/../vitasdk
+      VITASDK: /home/runner/vitasdk
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +20,8 @@ jobs:
           cd "$RUNNER_TEMP/vdpm"
           ./bootstrap-vitasdk.sh
           export PATH="$VITASDK/bin:$PATH"
-          ./install-all.sh
+          # the SDK's own vdpm (bin/vdpm with libexec/vdpm/pacman), not the script in the clone
+          "$VITASDK/bin/vdpm" install zlib libpng libjpeg-turbo freetype libvita2d mpg123
 
       - name: Build
         run: |
