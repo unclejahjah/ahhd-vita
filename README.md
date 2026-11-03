@@ -30,21 +30,30 @@ Other data, not used yet:
 
 ```
 gcc -O2 -Ithird_party/libtess2/Include -o hosttest tools/hosttest.c \
-  src/swf.c src/render.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c \
+  src/ah_view.c src/swf.c src/render.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c \
   src/cc_host.c src/cc_native.c src/hostfont.c src/strtab.c src/cc_buttons.c \
   src/level.c src/player.c src/enemy.c third_party/libtess2/Source/*.c -lm -lz
 
 ./hosttest "<install>/data/game/alien.pak" walk out/walk 8
 ```
 
-The second argument is a root frame label. ALIEN has 72, including `stand`, `walk`, `jump`, `roll`, `shoot_stand`, `shoot_up`, `slash`, `dig`, `flip`, `beam` and the `die_*` set.
+`--root file.pak frame out [zoom] [pan_x] [pan_y]` draws one root frame on a 960x544 screen, framed as the Vita viewer frames it.
 
-## Vita build
+The second argument of the default mode is a root frame label. ALIEN has 72, including `stand`, `walk`, `jump`, `roll`, `shoot_stand`, `shoot_up`, `slash`, `dig`, `flip`, `beam` and the `die_*` set.
 
-```
-mkdir build && cd build
-cmake ..
-make
-```
+## Vita animation viewer
 
-The Vita app is still cc-vita's Castle Crashers front end (paths, host natives, menus). Adapting it is the next step; see `HANDOFF.md`.
+The default Vita build (`src/ah_viewer.c`) is an animation viewer for the game's movies.
+
+1. Get `ahhd_vita.vpk`: from the "Vita build" workflow's `ahhd-vita-vpk` artifact on GitHub Actions, or build it yourself with VitaSDK:
+   ```
+   mkdir build && cd build
+   cmake ..
+   make
+   ```
+2. Install the VPK with VitaShell.
+3. Copy the `game` and `levels` folders from your install's `data` folder to `ux0:data/AlienHominidHD/`, so that `ux0:data/AlienHominidHD/game/alien.pak` exists. About 25 MB.
+
+Controls: Up/Down picks the movie, Left/Right the animation (or the root frame when a movie has no labels), L/R zooms, the left stick pans, CROSS resets the view, SELECT+Up toggles the 60 fps cap, and START quits.
+
+Levels only show what their timeline places. Most of a level is built by its scripts, which need the ActionScript front end (`-DAH_VIEWER=OFF`, still cc-vita's Castle Crashers one; see `HANDOFF.md`).

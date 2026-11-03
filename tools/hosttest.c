@@ -16,6 +16,7 @@
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
 #include "../src/enemy.h"
+#include "../src/ah_view.h"
 
 #define MAX_W 960
 #define MAX_H 544
@@ -792,7 +793,33 @@ static int as_mode(int argc, char **argv) {
     return 0;
 }
 
+// One root frame on the 960x544 Vita screen, framed the way src/ah_viewer.c frames it:
+// --root file.pak frame out_prefix [zoom] [pan_x] [pan_y]
+static int root_mode(int argc, char **argv) {
+    if (argc < 5) { fprintf(stderr, "usage: %s --root file frame out_prefix [zoom] [pan_x] [pan_y]\n", argv[0]); return 1; }
+    char err[256];
+    Movie *m = swf_load(argv[2], err, sizeof err);
+    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
+    int f = atoi(argv[3]);
+    if (f < 0 || f >= m->root.nframes) { fprintf(stderr, "frame %d of %d\n", f, m->root.nframes); return 1; }
+    W = MAX_W; H = MAX_H;
+    float zoom = argc > 5 ? (float)atof(argv[5]) : 0;
+    float px = argc > 6 ? (float)atof(argv[6]) : 0, py = argc > 7 ? (float)atof(argv[7]) : 0;
+    Mat root = ah_view_matrix(m, zoom, px, py);
+    static const uint8_t paper[3] = {237, 237, 224};
+    clear(paper);
+    DrawList vb = {0};
+    render_begin(&vb);
+    render_display_list(m, &m->root.frames[f], root, CX_IDENTITY, 0, &vb);
+    rasterise(&vb);
+    write_frame(argv[4], 0);
+    printf("stage %dx%d, %d frames, %d labels, %d triangles\n", m->stage_w, m->stage_h, m->root.nframes,
+           m->root.nlabels, render_stats.triangles);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--root")) return root_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--as")) return as_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--dress")) return dress_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--sprite")) return sprite_mode(argc, argv);
