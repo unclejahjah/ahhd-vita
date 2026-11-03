@@ -1,0 +1,39 @@
+build/
+*.vpk
+*.self
+*.ppm
+*.png
+# game files are the user's own copy: never commit them
+*.swf
+*.SWF
+*.mp3
+*.xma
+*.dds
+*.fnt
+*.exe
+strings_*.txt
+
+# never distribute game assets or anything taken from the install
+*.pak
+*.raw
+*.pdag
+*.PDAG
+*.wav
+*.ogg
+*.dat
+*.sav
+*.dmp
+*.psp2dmp
+*.bundle
+__pycache__/
+crashdumps/
+saves/
+
+# Alien Hominid HD game files: the user's own copy, never committed
+*.baf
+*.BREC
+*.brec
+*.adpcm
+*.dct
+*.xpu
+*.xvu
