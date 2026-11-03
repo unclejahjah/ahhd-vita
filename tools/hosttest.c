@@ -463,6 +463,19 @@ static Movie *host_loader(AsVm *vm, const char *url) {
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
     load_count++;
+    // Alien Hominid HD's scripts load "../alien/alien.swf"; the install has game/alien.pak
+    char pakname[256];
+    const char *dot = strrchr(base, '.');
+    if (dot && !strcasecmp(dot, ".swf")) {
+        snprintf(pakname, sizeof pakname, "%.*s.pak", (int)(dot - base), base);
+        for (int i = 0; i < 2 && base != pakname; i++) {
+            static const char *pdirs[] = {"game", "levels"};
+            char p[1200];
+            snprintf(p, sizeof p, "%s/%s/%s", game_dir, pdirs[i], pakname);
+            FILE *f = fopen(p, "rb");
+            if (f) { fclose(f); base = pakname; }
+        }
+    }
     for (int i = 0; i < nmovie_cache; i++)
         if (!strcasecmp(movie_cache[i].name, base)) return movie_cache[i].m;
     static const char *dirs[] = {"game", "levels"};
