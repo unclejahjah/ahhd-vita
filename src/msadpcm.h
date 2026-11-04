@@ -18,8 +18,12 @@ typedef struct {
 int adpcm_open(Adpcm *a, const char *path);   // 1 on success
 void adpcm_close(Adpcm *a);
 void adpcm_rewind(Adpcm *a);
-// Decodes the next block into out (room for spb stereo frames). Returns frames, 0 at the end.
+// Decodes the next block into out (room for spb stereo frames). Returns frames, 0 at the end,
+// -1 if the file couldn't be read.
 int adpcm_read_block(Adpcm *a, int16_t *out);
+// Opens the file again and carries on from the same place (the old handle can go bad, e.g.
+// while the Vita had the app suspended). 0 if it can't.
+int adpcm_reopen(Adpcm *a, const char *path);
 // Decodes one block from memory (for tests and whole-file decoding).
 int adpcm_decode_block(const Adpcm *a, const uint8_t *in, int bytes, int16_t *out);
 long adpcm_total_frames(const Adpcm *a);

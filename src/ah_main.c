@@ -544,6 +544,7 @@ int main(void) {
         if (!debug && (pressed & SCE_CTRL_START) && !vm->overlay) ah_request_pause(vm, 0);
 
         SceUInt64 now = sceKernelGetProcessTimeWide();
+        if (now - prev > 1000000) audio_resumed();   // a second without a frame: the app was suspended
         acc += now - prev;
         prev = now;
         if (acc > 2 * tick_us) acc = 2 * tick_us;

@@ -116,6 +116,16 @@ int adpcm_read_block(Adpcm *a, int16_t *out) {
     if (left <= 0) return 0;
     int want = left < a->block_align ? (int)left : a->block_align;
     int got = (int)fread(a->block, 1, want, a->f);
+    if (got < want) return -1;   // a read error (the position stays, for adpcm_reopen)
     a->data_pos += want;
-    return got > 0 ? adpcm_decode_block(a, a->block, got, out) : 0;
+    return adpcm_decode_block(a, a->block, got, out);
+}
+
+int adpcm_reopen(Adpcm *a, const char *path) {
+    long pos = a->data_pos - a->data_pos % (a->block_align ? a->block_align : 1);
+    adpcm_close(a);
+    if (!adpcm_open(a, path)) return 0;
+    if (fseek(a->f, a->data_start + pos, SEEK_SET)) { adpcm_close(a); return 0; }
+    a->data_pos = pos;
+    return 1;
 }

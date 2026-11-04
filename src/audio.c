@@ -51,7 +51,7 @@ static char g_music_req[64];
 static volatile int g_music_req_loop, g_music_req_seq;
 static Adpcm g_music;              // g_music.f: playing
 static int g_music_loop, g_music_rate;
-static volatile int g_music_paused;
+static volatile int g_music_paused, g_resumed;
 static volatile float g_music_vol = 1, g_sfx_vol = 1;
 static char g_music_path[192];
 
@@ -135,8 +135,12 @@ static void mix_music(int32_t *mix, int n) {
             have = keep > 0 ? keep : 0;
             used = 0;
             int got = g_music.spb <= 512 ? adpcm_read_block(&g_music, buf + have * 2) : 0;
+            if (got < 0 && adpcm_reopen(&g_music, g_music_path))   // a stale file handle: once more
+                got = adpcm_read_block(&g_music, buf + have * 2);
             if (got > 0) { have += got; continue; }
-            if (g_music_loop && g_music.data_size) { adpcm_rewind(&g_music); continue; }
+            // the end: loop, unless that reads nothing either (never spin here: the whole
+            // mixer, effects too, would go quiet)
+            if (got == 0 && g_music_loop && g_music.data_pos > 0) { adpcm_rewind(&g_music); continue; }
             music_close();
             have = used = 0;
             return;
@@ -170,6 +174,10 @@ static int mix_thread(SceSize args, void *argp) {
             } else {
                 music_open();
             }
+        }
+        if (g_resumed) {   // back from the LiveArea: fresh handles for the music file
+            g_resumed = 0;
+            if (g_music.f && !adpcm_reopen(&g_music, g_music_path)) music_close();
         }
         memset(mix, 0, sizeof mix);
         mix_music(mix, OUT_FRAMES);
@@ -316,3 +324,5 @@ void audio_sfx_set(const void *owner, float volume, float pan) {
         if (g_voices[v].active && g_voices[v].owner == owner) set_gain(&g_voices[v], volume, pan);
     unlock();
 }
+
+void audio_resumed(void) { g_resumed = 1; }
