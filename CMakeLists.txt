@@ -65,8 +65,24 @@ target_link_libraries(${PROJECT_NAME}
   c
 )
 
+# LiveArea: the bubble and background are made from the game's art, so the PNGs stay out of
+# git (see .gitignore). With them in sce_sys/ the VPK gets the custom LiveArea; without them
+# it builds with the default one.
+set(AH_LA ${CMAKE_SOURCE_DIR}/sce_sys)
+set(AH_VPK_FILES)
+if(EXISTS ${AH_LA}/icon0.png AND EXISTS ${AH_LA}/livearea/contents/bg.png
+   AND EXISTS ${AH_LA}/livearea/contents/startup.png)
+  list(APPEND AH_VPK_FILES
+    FILE ${AH_LA}/icon0.png sce_sys/icon0.png
+    FILE ${AH_LA}/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
+    FILE ${AH_LA}/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
+    FILE ${AH_LA}/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
+  )
+endif()
+
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
+  ${AH_VPK_FILES}
 )
