@@ -477,3 +477,145 @@ int cc_buttons_playstation(Movie *m, int style) {
     if (r && !r->tessellated) { make_trigger(r, 'R'); done++; }
     return done;
 }
+
+// ---- Alien Hominid HD: its glyph clip, recoloured like the Castle Crashers build -------
+// AH's prompts are one clip with a frame per device and button ("ps3_x", "ps4_l1", ...).
+// The PS3 frames are a dark ball (one shape all four share) under a coloured symbol, and
+// the shoulder frames a bumper under "L1"/"R1". For the Vita: each face button gets its own
+// copy of the ball in its PlayStation colour with a white symbol, and the shoulders read
+// L and R.
+
+static void *memdup(const void *p, size_t n) {
+    void *q = malloc(n ? n : 1);
+    if (q && n) memcpy(q, p, n);
+    return q;
+}
+
+static int free_char_id(const Movie *m) {
+    for (int c = 65535; c > 0; c--)
+        if (m->chars[c].type == CHAR_NONE && !m->chars[c].export) return c;
+    return -1;
+}
+
+static Shape *clone_shape(const Shape *s, int id) {
+    if (s->nbfills) return NULL;
+    Shape *c = calloc(1, sizeof *c);
+    c->id = id;
+    c->has_box = s->has_box;
+    memcpy(c->box, s->box, sizeof c->box);
+    c->nfills = s->nfills;
+    c->fills = memdup(s->fills, sizeof(ShapeFill) * s->nfills);
+    for (int i = 0; i < s->nfills; i++) {
+        c->fills[i].pts = memdup(s->fills[i].pts, sizeof(float) * 2 * s->fills[i].npoints);
+        c->fills[i].loop_start = memdup(s->fills[i].loop_start, sizeof(int) * (s->fills[i].nloops + 1));
+    }
+    c->nlines = s->nlines;
+    c->lines = memdup(s->lines, sizeof(ShapeLine) * s->nlines);
+    for (int i = 0; i < s->nlines; i++) {
+        c->lines[i].pts = memdup(s->lines[i].pts, sizeof(float) * 2 * s->lines[i].npoints);
+        c->lines[i].poly_start = memdup(s->lines[i].poly_start, sizeof(int) * (s->lines[i].npolys + 1));
+    }
+    return c;
+}
+
+// a one-frame sprite showing `cid` where `of` shows its first child
+static Sprite *clone_sprite(const Sprite *of, int id, int cid) {
+    Sprite *c = calloc(1, sizeof *c);
+    c->id = id;
+    c->nframes = of->nframes;
+    c->first_stop = of->first_stop;
+    c->frames = calloc(of->nframes, sizeof(Frame));
+    for (int f = 0; f < of->nframes; f++) {
+        c->frames[f].count = of->frames[f].count;
+        c->frames[f].places = memdup(of->frames[f].places, sizeof(Place) * of->frames[f].count);
+        if (c->frames[f].count) c->frames[f].places[0].cid = cid;
+    }
+    return c;
+}
+
+static Shape *first_shape(const Movie *m, int cid, const Sprite **sp_out) {
+    if (m->chars[cid].type != CHAR_SPRITE) return NULL;
+    const Sprite *sp = m->chars[cid].ptr;
+    if (!sp->nframes || !sp->frames[0].count) return NULL;
+    const Character *c = &m->chars[sp->frames[0].places[0].cid];
+    if (sp_out) *sp_out = sp;
+    return c->type == CHAR_SHAPE ? c->ptr : NULL;
+}
+
+// the ball's greys, darkest to lightest, become the button colour's shade, base and light
+// (the black outline and the yellow rim light stay)
+static void colour_ball(Shape *s, int which) {
+    int col[16], n = 0;
+    for (int i = 0; i < s->nfills && n < 16; i++) {
+        const uint8_t *c = s->fills[i].style.color;
+        int grey = abs(c[0] - c[1]) < 24 && abs(c[1] - c[2]) < 24;
+        if (s->fills[i].style.type == FILL_SOLID && grey && !is_black(c) && !is_white(c)) col[n++] = i;
+    }
+    for (int a = 0; a < n; a++)
+        for (int b = a + 1; b < n; b++)
+            if (luma(s->fills[col[b]].style.color) < luma(s->fills[col[a]].style.color)) { int t = col[a]; col[a] = col[b]; col[b] = t; }
+    for (int k = 0; k < n; k++) {
+        const uint8_t *to = k == 0 ? COLOURED[which].shade : k == n - 1 ? COLOURED[which].light : COLOURED[which].base;
+        memcpy(s->fills[col[k]].style.color, to, 3);
+    }
+}
+
+int cc_buttons_ah_glyphs(Movie *m) {
+    static const struct { const char *label; int which; } face[] = {
+        {"ps3_x", CC_BTN_CROSS}, {"ps3_circle", CC_BTN_CIRCLE}, {"ps3_square", CC_BTN_SQUARE}, {"ps3_triangle", CC_BTN_TRIANGLE}};
+    static const struct { const char *label; char c; } shoulder[] = {{"ps3_l1", 'L'}, {"ps3_r1", 'R'}};
+    int done = 0;
+    for (int c = 0; c < 65536; c++) {
+        if (m->chars[c].type != CHAR_SPRITE) continue;
+        Sprite *sp = m->chars[c].ptr;
+        for (int l = 0; l < sp->nlabels; l++) {
+            int f = sp->labels[l].frame;
+            if (f < 0 || f >= sp->nframes) continue;
+            Frame *fr = &sp->frames[f];
+            for (int k = 0; k < 4; k++) {
+                if (strcmp(sp->labels[l].name, face[k].label)) continue;
+                for (int i = 0; i < fr->count; i++) {
+                    const Sprite *inner = NULL;
+                    Shape *s = first_shape(m, fr->places[i].cid, &inner);
+                    if (!s || s->tessellated) continue;
+                    if (s->nfills == 1) {   // the symbol: white
+                        memcpy(s->fills[0].style.color, "\xff\xff\xff", 3);
+                        done++;
+                    } else if (s->nfills >= 5) {   // the shared ball: this button's own copy
+                        int sid = free_char_id(m);
+                        Shape *copy = sid > 0 ? clone_shape(s, sid) : NULL;
+                        if (!copy) continue;
+                        m->chars[sid].type = CHAR_SHAPE;
+                        m->chars[sid].ptr = copy;
+                        colour_ball(copy, face[k].which);
+                        int pid = free_char_id(m);
+                        if (pid <= 0) continue;
+                        m->chars[pid].type = CHAR_SPRITE;
+                        m->chars[pid].ptr = clone_sprite(inner, pid, sid);
+                        fr->places[i].cid = pid;
+                        fr->places[i].uid = 0x7f000000u + pid;   // a new instance, not the shared ball's
+                        done++;
+                    }
+                }
+            }
+            for (int k = 0; k < 2; k++) {
+                if (strcmp(sp->labels[l].name, shoulder[k].label)) continue;
+                for (int i = 0; i < fr->count; i++) {
+                    Shape *s = first_shape(m, fr->places[i].cid, NULL);
+                    if (!s || s->tessellated || s->nfills != 1) continue;
+                    Box b = fill_box(&s->fills[0]);
+                    uint8_t colour[4];
+                    memcpy(colour, s->fills[0].style.color, 4);
+                    float cy = (b.y0 + b.y1) / 2, h = (b.y1 - b.y0);
+                    Poly p = {0};
+                    letter(&p, shoulder[k].c, (Box){b.x0, cy - h / 2, b.x1, cy + h / 2});
+                    free(s->fills[0].pts);
+                    free(s->fills[0].loop_start);
+                    s->fills[0] = fill_from(&p, colour);
+                    done++;
+                }
+            }
+        }
+    }
+    return done;
+}

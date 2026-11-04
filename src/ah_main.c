@@ -573,8 +573,14 @@ int main(void) {
             float k = SCREEN_W / root->stage_w;
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
-            as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
-            if (vm->overlay) {   // the menu/pause layer
+            if (ah_loading) {   // the loading screen covers everything
+                float kl = SCREEN_W / ah_loading->movie->stage_w;
+                Mat sl = {kl / 20, 0, 0, kl / 20, 0, 0};
+                as_render_mc(ah_loading, sl, CX_IDENTITY, &vb);
+            } else {
+                as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            }
+            if (vm->overlay && !ah_loading) {   // the menu/pause layer
                 float ko = SCREEN_W / vm->overlay->movie->stage_w;
                 Mat so = {ko / 20, 0, 0, ko / 20, 0, 0};
                 as_render_mc(vm->overlay, so, CX_IDENTITY, &vb);
@@ -582,7 +588,8 @@ int main(void) {
             build_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
         }
 
-        vita2d_set_clear_color(RGBA8(root->bg[0], root->bg[1], root->bg[2], 255));
+        const Movie *shown = ah_loading ? ah_loading->movie : root;
+        vita2d_set_clear_color(RGBA8(shown->bg[0], shown->bg[1], shown->bg[2], 255));
         draw_frame(&vb, heat_clock++);
         if (overlay) {
             unsigned ink = RGBA8(255, 255, 255, 255);

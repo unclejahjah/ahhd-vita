@@ -3,6 +3,7 @@
 // the scripts take the plain single-player path.
 #include "ah_host.h"
 #include "cc_host.h"
+#include "cc_buttons.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -194,8 +195,10 @@ static AsVal SetPlaying(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+AsMc *ah_loading;   // see "the loading screen" below
+
 int ah_request_pause(AsVm *vm, int port) {
-    if (ah_paused || as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) return 0;
+    if (ah_paused || ah_loading || as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) return 0;
     cc_set_flash_global(vm, "g_nPausePlayer", as_num(port));
     open_overlay(vm, 1);
     ah_paused = 1;
@@ -215,33 +218,33 @@ int ah_start(AsVm *vm, const char *first) {
 
 static char ah_next_movie[64];
 
-const char *ah_tick(AsVm *vm) {
-    static char changed[64];
-    if (!ah_paused) as_tick(vm);
-    if (overlay_open) {
-        overlay_open = overlay_close = 0;
-        Movie *o = vm->loader(vm, "pause.pak");
-        vm->overlay = o ? as_mc_new(vm, o, &o->root, NULL, 0) : NULL;
-        if (!o) ah_paused = 0;
-    }
-    if (vm->overlay) {   // the overlay runs as its own _root
-        AsMc *root = vm->root;
-        uint32_t tick = vm->tick;
-        vm->root = vm->overlay;
-        as_tick(vm);
-        vm->overlay = vm->root;
-        vm->root = root;
-        vm->tick = ah_paused ? vm->tick : tick;
-    }
-    if (overlay_close) {
-        overlay_close = 0;
-        vm->overlay = NULL;
-    }
-    if (!ah_next_movie[0]) return NULL;
-    snprintf(changed, sizeof changed, "%s", ah_next_movie);
-    ah_next_movie[0] = 0;
-    Movie *m = vm->loader(vm, changed);
-    if (!m) return NULL;
+// ---- the loading screen ----------------------------------------------------------------
+// The exe put loading.pak over the screen while it loaded a level. Its script and the exe
+// talk through flash globals: g_bLoaded (the exe: the level is in), g_bLevelLoaded
+// (loading.pak: done, after its 4-second minimum with a tip, or at once after the
+// scoreboard). Here: show it, load the level once it has been drawn, then hand over.
+
+static int loading_frames;       // ticks it has run
+static char loading_target[64];  // file still to load, "" once loaded
+
+static int wants_loading_screen(const char *file) {
+    return !strncasecmp(file, "level", 5) || !strncasecmp(file, "chal", 4);
+}
+
+static void run_as_root(AsVm *vm, AsMc **clip, int keep_tick) {
+    AsMc *root = vm->root;
+    uint32_t tick = vm->tick;
+    vm->root = *clip;
+    as_tick(vm);
+    *clip = vm->root;
+    vm->root = root;
+    if (keep_tick) vm->tick = tick;
+}
+
+// Swaps the root for `file`; 0 if it can't be loaded.
+static int change_root(AsVm *vm, const char *file) {
+    Movie *m = vm->loader(vm, file);
+    if (!m) return 0;
     // as in Flash, a new root movie silences the old one's sounds (car engines loop)
     if (ah_sfx_stop_all) ah_sfx_stop_all();
     music_pause(0);
@@ -252,7 +255,60 @@ const char *ah_tick(AsVm *vm) {
     // the menus and game-over screens set g_bNoPause; a new movie starts pausable (the
     // levels never clear it themselves)
     cc_set_flash_global(vm, "g_bNoPause", as_num(0));
-    return changed;
+    return 1;
+}
+
+static void end_loading(AsVm *vm) {
+    ah_loading = NULL;
+    as_set(vm, as_objv(vm->global), as_atom(vm, "__ah_loading"), as_undef());
+}
+
+const char *ah_tick(AsVm *vm) {
+    static char changed[64];
+    if (ah_loading) {   // only the loading screen runs
+        run_as_root(vm, &ah_loading, 0);
+        loading_frames++;
+        if (loading_target[0] && loading_frames >= 2) {   // it is on screen: load now
+            snprintf(changed, sizeof changed, "%s", loading_target);
+            loading_target[0] = 0;
+            int ok = change_root(vm, changed);
+            cc_set_flash_global(vm, "g_bLoaded", as_bool(1));
+            if (!ok) end_loading(vm);
+            return ok ? changed : NULL;
+        }
+        if (!loading_target[0] && (as_tobool(vm, cc_flash_global(vm, "g_bLevelLoaded")) || loading_frames > 30 * 30))
+            end_loading(vm);
+        return NULL;
+    }
+    if (!ah_paused) as_tick(vm);
+    if (overlay_open) {
+        overlay_open = overlay_close = 0;
+        Movie *o = vm->loader(vm, "pause.pak");
+        vm->overlay = o ? as_mc_new(vm, o, &o->root, NULL, 0) : NULL;
+        if (!o) ah_paused = 0;
+    }
+    if (vm->overlay) run_as_root(vm, &vm->overlay, !ah_paused);   // the overlay runs as its own _root
+    if (overlay_close) {
+        overlay_close = 0;
+        vm->overlay = NULL;
+    }
+    if (!ah_next_movie[0]) return NULL;
+    snprintf(changed, sizeof changed, "%s", ah_next_movie);
+    ah_next_movie[0] = 0;
+    Movie *l = wants_loading_screen(changed) ? vm->loader(vm, "loading.pak") : NULL;
+    if (l) {
+        cc_set_flash_global(vm, "g_bLoaded", as_bool(0));
+        cc_set_flash_global(vm, "g_bLevelLoaded", as_bool(0));
+        ah_loading = as_mc_new(vm, l, &l->root, NULL, 0);
+        as_set(vm, as_objv(vm->global), as_atom(vm, "__ah_loading"), as_objv(&ah_loading->obj));   // kept alive
+        loading_frames = 0;
+        snprintf(loading_target, sizeof loading_target, "%s", changed);
+        vm->overlay = NULL;
+        ah_paused = 0;
+        if (ah_sfx_stop_all) ah_sfx_stop_all();
+        return NULL;
+    }
+    return change_root(vm, changed) ? changed : NULL;
 }
 
 // ChangeMovie("attract.cok6"): the exe swaps the root movie for another file. The front end
@@ -309,6 +365,7 @@ static const Patch patches[] = {
 };
 
 void ah_patch_movie(const char *file, Movie *m) {
+    cc_buttons_ah_glyphs(m);   // PlayStation buttons like the Castle Crashers build
     const char *base = strrchr(file, '/');
     base = base ? base + 1 : file;
     for (size_t i = 0; i < sizeof patches / sizeof *patches; i++) {
@@ -409,7 +466,7 @@ static const char *text_for_number(AsVm *vm, int n) {
 // buttons; the shoulder ones show as L1/R1.
 static const char *const VITA_BUTTONS[][2] = {
     {"menu_select", "x"}, {"menu_back", "circle"}, {"menu_x", "square"}, {"menu_y", "triangle"},
-    {"menu_lt", "l1"},    {"menu_rt", "r1"},       {"start", "options"}, {"jump", "x"},
+    {"menu_lt", "l1"},    {"menu_rt", "r1"},       {"start", "start"}, {"jump", "x"},
     {"shoot", "square"},  {"grenade", "circle"},   {"interact", "triangle"},
     {"roll_left", "l1"},  {"roll_right", "r1"},
 };
@@ -427,7 +484,7 @@ static AsVal GetInputBinding(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
         if (ah_log) ah_log(action);
         button = "x";
     }
-    as_set(vm, b, as_atom(vm, "s_device"), as_strv(as_atom(vm, "ps4")));
+    as_set(vm, b, as_atom(vm, "s_device"), as_strv(as_atom(vm, "ps3")));
     as_set(vm, b, as_atom(vm, "s_button"), as_strv(as_atom(vm, button)));
     return as_bool(1);
 }

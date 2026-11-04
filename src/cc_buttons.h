@@ -15,4 +15,9 @@ int cc_buttons_playstation(Movie *m, int style);
 // its place (fills added to the logo). 1 if this was that file. Call before tessellating.
 int cc_menu_vita_badge(Movie *m);
 
+// Alien Hominid HD's glyph clip: the PS3 face buttons coloured like cc_buttons_playstation's
+// coloured style, and its L1/R1 shoulders as L and R. Call after swf_load, before
+// tessellating. Returns how many shapes it changed.
+int cc_buttons_ah_glyphs(Movie *m);
+
 #endif

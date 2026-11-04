@@ -18,6 +18,8 @@ int ah_request_pause(AsVm *vm, int port);
 int ah_load_strings(const char *path);
 // Vita changes to the game's own scripts (e.g. no vibration option); call on each loaded file.
 void ah_patch_movie(const char *file, Movie *m);
+// The game's loading screen while a level loads, or NULL. While it is up, draw only it.
+extern AsMc *ah_loading;
 extern int ah_paused;
 extern float ah_background_alpha;
 // sound, set by the front end: pause/resume music, volumes 0..1 (negative: unchanged),
