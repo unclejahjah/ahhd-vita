@@ -557,6 +557,7 @@ int main(void) {
             ticks++;
             acc -= tick_us;
             ticked = 1;
+            if (ah_loading) break;   // each loading-screen tick is shown before the next (one may load the level)
         }
 
         const Movie *root = vm->root->movie;

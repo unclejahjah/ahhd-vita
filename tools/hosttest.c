@@ -762,7 +762,7 @@ static int as_mode(int argc, char **argv) {
                     if (v.t == V_OBJ && v.o->type == OBJ_MC) ((AsMc *)v.o)->visible = 0;
                 }
             }
-            clear(ah_loading ? ah_loading->movie->bg : start->bg);
+            clear(ah_loading ? ah_loading->movie->bg : vm->root->movie->bg);   // as the Vita does
             render_begin(&vb);
             if (ah_loading) as_render_mc(ah_loading, screen, CX_IDENTITY, &vb);   // the loading screen
             else as_render_mc(vm->root, screen, CX_IDENTITY, &vb);

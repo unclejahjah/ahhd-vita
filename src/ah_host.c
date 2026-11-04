@@ -225,7 +225,7 @@ static char ah_next_movie[64];
 // scoreboard). Here: show it, load the level once it has been drawn, then hand over.
 
 static int loading_frames;       // ticks it has run
-#define LOAD_AT 4                // the tick the level loads on (its first two draw nothing)
+#define LOAD_AT 4                // the tick the level loads on: its art has been shown
 #define PRIME_TICKS 3            // level ticks run behind it
 static char loading_target[64];  // file still to load, "" once loaded
 
@@ -276,14 +276,14 @@ const char *ah_tick(AsVm *vm) {
             loading_target[0] = 0;
             int ok = change_root(vm, changed);
             cc_set_flash_global(vm, "g_bLoaded", as_bool(1));
-            if (!ok) end_loading(vm);
-            return ok ? changed : NULL;
+            if (!ok) { end_loading(vm); return NULL; }
+            // the level's first frames load its parts (hud, players, enemies, backgrounds):
+            // run them now, behind the loading screen, so all the loading is one pause
+            // before its animation starts (and no black screen after it)
+            for (int i = 0; i < PRIME_TICKS; i++) as_tick(vm);
+            return changed;
         }
-        // the level's first frames load its parts (hud, players, enemies, backgrounds):
-        // run them behind the loading screen, or the screen goes black while they load
-        if (!loading_target[0] && loading_frames > LOAD_AT && loading_frames <= LOAD_AT + PRIME_TICKS)
-            as_tick(vm);
-        if (!loading_target[0] && loading_frames > LOAD_AT + PRIME_TICKS && (as_tobool(vm, cc_flash_global(vm, "g_bLevelLoaded")) || loading_frames > 30 * 30))
+        if (!loading_target[0] && (as_tobool(vm, cc_flash_global(vm, "g_bLevelLoaded")) || loading_frames > 30 * 30))
             end_loading(vm);
         return NULL;
     }
@@ -308,7 +308,9 @@ const char *ah_tick(AsVm *vm) {
         cc_set_flash_global(vm, "g_bLevelLoaded", as_bool(0));
         ah_loading = as_mc_new(vm, l, &l->root, NULL, 0);
         as_set(vm, as_objv(vm->global), as_atom(vm, "__ah_loading"), as_objv(&ah_loading->obj));   // kept alive
-        loading_frames = 0;
+        // its first two frames draw nothing but the green stage: run them now, so the
+        // first one shown has its art
+        for (loading_frames = 0; loading_frames < 2; loading_frames++) run_as_root(vm, &ah_loading, 0);
         snprintf(loading_target, sizeof loading_target, "%s", changed);
         vm->overlay = NULL;
         ah_paused = 0;
