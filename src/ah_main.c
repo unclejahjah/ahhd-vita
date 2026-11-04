@@ -507,6 +507,7 @@ int main(void) {
     ah_music_pause = audio_music_pause;
     ah_audio_volumes = audio_set_volumes;
     ah_sfx_stop_all = stop_all_sfx;
+    ah_save_load(DATA_DIR "save.dat");   // unlocks, Load Level, options and volumes
     as_render_init(vm);
     if (!ah_start(vm, "legal.pak")) {
         SceCtrlData pad;
@@ -559,6 +560,7 @@ int main(void) {
             ticked = 1;
             if (ah_loading) break;   // each loading-screen tick is shown before the next (one may load the level)
         }
+        if (ticked && vm->tick % 60 == 0) ah_save_tick();   // written within two seconds of a change
 
         const Movie *root = vm->root->movie;
         if (ticked) {
@@ -619,6 +621,7 @@ int main(void) {
         }
     }
 
+    ah_save_tick();
     audio_shutdown();
     vita2d_wait_rendering_done();
     as_free(vm);

@@ -167,6 +167,66 @@ static AsVal GetSfxVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_num(sfx_volume);
 }
 
+// ---- the save file -----------------------------------------------------------------
+// The exe wrote the memory-card bytes to disk (hats 0-31, Load Level from 32, minigames
+// around 49-56, options 69-73) and kept the volumes. Here they go to one file: "AHS1",
+// then each port's 256 bytes, then the music and sound volumes (0-100) as one byte each.
+// ah_save_tick writes it when anything changed; it's written to a temporary name first
+// so a crash mid-write can't lose the old one.
+#define SAVE_MAGIC "AHS1"
+static unsigned char saved[MEMCARD_PORTS][MEMCARD_SIZE + 2];
+static char save_path[256];
+
+static void save_image(unsigned char out[MEMCARD_PORTS][MEMCARD_SIZE + 2]);
+
+int ah_save_load(const char *path) {
+    snprintf(save_path, sizeof save_path, "%s", path);
+    save_image(saved);   // nothing on disk yet: the defaults count as saved
+    FILE *f = fopen(path, "rb");
+    if (!f) {   // stopped between removing the old file and renaming the new one
+        char tmp[264];
+        snprintf(tmp, sizeof tmp, "%s.tmp", path);
+        f = fopen(tmp, "rb");
+    }
+    if (!f) return 0;
+    unsigned char buf[4 + sizeof saved];
+    size_t n = fread(buf, 1, sizeof buf, f);
+    fclose(f);
+    if (n != sizeof buf || memcmp(buf, SAVE_MAGIC, 4)) return 0;
+    memcpy(saved, buf + 4, sizeof saved);
+    for (int p = 0; p < MEMCARD_PORTS; p++) memcpy(memcard[p], saved[p], MEMCARD_SIZE);
+    if (saved[0][MEMCARD_SIZE] <= 100) music_volume = saved[0][MEMCARD_SIZE];
+    if (saved[0][MEMCARD_SIZE + 1] <= 100) sfx_volume = saved[0][MEMCARD_SIZE + 1];
+    if (ah_audio_volumes) ah_audio_volumes((float)music_volume / 100, (float)sfx_volume / 100);
+    return 1;
+}
+
+static void save_image(unsigned char out[MEMCARD_PORTS][MEMCARD_SIZE + 2]) {
+    memset(out, 0, sizeof saved);
+    for (int p = 0; p < MEMCARD_PORTS; p++) memcpy(out[p], memcard[p], MEMCARD_SIZE);
+    out[0][MEMCARD_SIZE] = (unsigned char)music_volume;
+    out[0][MEMCARD_SIZE + 1] = (unsigned char)sfx_volume;
+}
+
+int ah_save_tick(void) {
+    if (!save_path[0]) return 0;
+    unsigned char now[MEMCARD_PORTS][MEMCARD_SIZE + 2];
+    save_image(now);
+    if (!memcmp(now, saved, sizeof now)) return 0;
+    char tmp[264];
+    snprintf(tmp, sizeof tmp, "%s.tmp", save_path);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) return -1;
+    int ok = fwrite(SAVE_MAGIC, 1, 4, f) == 4 && fwrite(now, 1, sizeof now, f) == sizeof now;
+    ok = fclose(f) == 0 && ok;
+    remove(save_path);
+    if (!ok || rename(tmp, save_path) != 0) return -1;
+    memcpy(saved, now, sizeof now);
+    if (ah_log) ah_log("saved");
+    return 1;
+}
+
+
 static int pause_opened;   // the overlay is the in-game pause menu (START), not the main menu
 
 static AsVal UnPause(AsVm *vm, AsVal this_, int argc, AsVal *argv) {

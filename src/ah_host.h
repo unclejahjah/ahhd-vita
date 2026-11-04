@@ -16,6 +16,11 @@ int ah_request_pause(AsVm *vm, int port);
 // The game's text table, data/loc/en.dct (or another language); the number of strings, 0 if
 // unreadable. Without it the SWF's own older copy answers.
 int ah_load_strings(const char *path);
+
+// The save file (memory-card bytes and volumes): read at startup, then written whenever
+// it changes (call ah_save_tick now and then; 1 written, 0 unchanged, -1 failed).
+int ah_save_load(const char *path);
+int ah_save_tick(void);
 // Vita changes to the game's own scripts (e.g. no vibration option); call on each loaded file.
 void ah_patch_movie(const char *file, Movie *m);
 // The game's loading screen while a level loads, or NULL. While it is up, draw only it.
