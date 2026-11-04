@@ -147,12 +147,18 @@ static AsVal SetSfxVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+static int pause_opened;   // the overlay is the in-game pause menu (START), not the main menu
+
 static AsVal UnPause(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     log_call(vm, "UnPause", argc, argv);
     ah_paused = 0;
     overlay_close = 1;
     music_pause(0);
+    // pause.pak's first frame sets g_bNoPause while its menu is up; the exe let the game
+    // pause again once it closed. (Quitting from it sets g_bNoPause after this call.)
+    if (pause_opened) cc_set_flash_global(vm, "g_bNoPause", as_num(0));
+    pause_opened = 0;
     return as_undef();
 }
 
@@ -174,6 +180,7 @@ int ah_request_pause(AsVm *vm, int port) {
     cc_set_flash_global(vm, "g_nPausePlayer", as_num(port));
     open_overlay(vm, 1);
     ah_paused = 1;
+    pause_opened = 1;
     music_pause(1);
     return 1;
 }
@@ -222,6 +229,7 @@ const char *ah_tick(AsVm *vm) {
     set_root(vm, m);
     vm->overlay = NULL;
     ah_paused = 0;
+    pause_opened = 0;
     // the menus and game-over screens set g_bNoPause; a new movie starts pausable (the
     // levels never clear it themselves)
     cc_set_flash_global(vm, "g_bNoPause", as_num(0));

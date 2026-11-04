@@ -200,7 +200,14 @@ static int mix_thread(SceSize args, void *argp) {
             int32_t x = mix[i];
             out[which][i] = x > 32767 ? 32767 : x < -32768 ? -32768 : x;
         }
-        sceAudioOutOutput(g_port, out[which]);   // blocks until the port takes it
+        // blocks until the port takes it; if the port went bad (e.g. after the system
+        // suspended the app), open a fresh one
+        if (sceAudioOutOutput(g_port, out[which]) < 0) {
+            sceAudioOutReleasePort(g_port);
+            sceKernelDelayThread(20000);
+            g_port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, OUT_FRAMES, OUT_RATE, SCE_AUDIO_OUT_MODE_STEREO);
+            if (g_port < 0) { sceKernelDelayThread(100000); g_port = 0x7fffffff; }   // keep trying
+        }
         which ^= 1;
     }
     return 0;
@@ -210,7 +217,7 @@ static int mix_thread(SceSize args, void *argp) {
 
 int audio_init(const char *data_dir) {
     snprintf(g_dir, sizeof g_dir, "%s", data_dir);
-    g_port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, OUT_FRAMES, OUT_RATE, SCE_AUDIO_OUT_MODE_STEREO);
+    g_port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, OUT_FRAMES, OUT_RATE, SCE_AUDIO_OUT_MODE_STEREO);
     if (g_port < 0) return 0;
     sceKernelCreateLwMutex(&g_lock, "cc_audio", 0, 0, NULL);
     g_load_sema = sceKernelCreateSema("cc_sfx_load", 0, 0, 1 << 20, NULL);
