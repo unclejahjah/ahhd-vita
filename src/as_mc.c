@@ -151,6 +151,10 @@ static void decompose(AsMc *mc) {
 static void recompose(AsMc *mc) {
     float r = mc->rotation * 3.14159265f / 180.0f, cs = cosf(r), sn = sinf(r);
     float xs = mc->xscale / 100, ys = mc->yscale / 100;
+    // Flash rebuilds the matrix from itself on each scale write, so _xscale = -100 then
+    // _yscale = -100 ends up as a single x mirror, not a 180-degree turn. The UFO levels
+    // (1-5, 2-6) rely on this for the booster and cannon.
+    if (xs < 0 && ys < 0) ys = -ys;
     mc->m.a = xs * cs;
     mc->m.b = xs * sn;
     mc->m.c = -ys * sn;
