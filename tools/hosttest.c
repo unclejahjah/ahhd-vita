@@ -584,6 +584,7 @@ static int as_mode(int argc, char **argv) {
             printf("font: %s\n", err);
         }
     }
+    if (getenv("AH_SAVE")) ah_save_load(getenv("AH_SAVE"));   // AH_SAVE=file: load it first, write it at the end
     if (!ah_start(vm, argv[3])) return 1;
     W = MAX_W; H = MAX_H;
     DrawList vb = {0};
@@ -844,6 +845,7 @@ static int as_mode(int argc, char **argv) {
         printf("\nprofile (from frame %s):\n", getenv("AS_PROF"));
         as_prof_report(40, line);
     }
+    if (getenv("AH_SAVE")) printf("save: %d\n", ah_save_tick());
     printf("\n%d loadMovie calls, %d files parsed\n", load_count, nmovie_cache);
     printf("\n%d distinct warnings:\n", nwarn);
     for (int i = 0; i < nwarn; i++) printf("  %6d x %s\n", warn_count[i], warn_text[i]);

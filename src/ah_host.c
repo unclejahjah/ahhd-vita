@@ -180,6 +180,9 @@ static AsVal GetSfxVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 #define SAVE_MAGIC "AHS2"   // "AHS1" files came from a build that mixed up MEMCARD_Seek's arguments: ignored
 static unsigned char saved[MEMCARD_PORTS][MEMCARD_SIZE + 2];
 static char save_path[256];
+// the Gore option (GLOBAL_gore): the exe kept it in its own settings, not on the memory
+// card. Saved in port 2's first spare byte: 0 never set, 1 off, 2 on.
+static int gore_setting;
 
 static void save_image(unsigned char out[MEMCARD_PORTS][MEMCARD_SIZE + 2]);
 
@@ -202,6 +205,7 @@ int ah_save_load(const char *path) {
     if (saved[0][MEMCARD_SIZE] <= 100) music_volume = saved[0][MEMCARD_SIZE];
     if (saved[0][MEMCARD_SIZE + 1] <= 100) sfx_volume = saved[0][MEMCARD_SIZE + 1];
     if (ah_audio_volumes) ah_audio_volumes((float)music_volume / 100, (float)sfx_volume / 100);
+    if (saved[1][MEMCARD_SIZE] <= 2) gore_setting = saved[1][MEMCARD_SIZE];
     return 1;
 }
 
@@ -210,6 +214,7 @@ static void save_image(unsigned char out[MEMCARD_PORTS][MEMCARD_SIZE + 2]) {
     for (int p = 0; p < MEMCARD_PORTS; p++) memcpy(out[p], memcard[p], MEMCARD_SIZE);
     out[0][MEMCARD_SIZE] = (unsigned char)music_volume;
     out[0][MEMCARD_SIZE + 1] = (unsigned char)sfx_volume;
+    out[1][MEMCARD_SIZE] = (unsigned char)gore_setting;
 }
 
 int ah_save_tick(void) {
@@ -299,6 +304,7 @@ int ah_start(AsVm *vm, const char *first) {
     if (!m) return 0;
     snprintf(root_file, sizeof root_file, "%s", first);
     set_root(vm, m);
+    if (gore_setting) cc_set_flash_global(vm, "GLOBAL_gore", as_bool(gore_setting == 2));   // from the save
     return 1;
 }
 
@@ -617,6 +623,7 @@ static AsVal SetFlashGlobal(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     int n = 0;
     if (v.t == V_NUM && sscanf(name, "GLOBAL_alien%*d_score%n", &n) >= 0 && n && !name[n] && isfinite(v.n))
         v = as_num(trunc(v.n));
+    if (!strcmp(name, "GLOBAL_gore")) gore_setting = as_tobool(vm, v) ? 2 : 1;   // saved (see gore_setting)
     cc_set_flash_global(vm, name, v);
     return as_undef();
 }
