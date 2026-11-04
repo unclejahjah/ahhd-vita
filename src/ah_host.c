@@ -411,6 +411,19 @@ static AsVal f_PDASetLevelBoxText(AsVm *vm, AsVal this_, int argc, AsVal *argv) 
     return as_undef();
 }
 
+// f_SetCreditText(clip, text, shadow, n): the exe filled in credit n. Its credits aren't in
+// the game's files, so the ending goes back to the menu (movieend.pak's f_exit) when the
+// roll would start, instead of scrolling empty lines.
+static AsVal f_SetCreditText(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_; (void)argc; (void)argv;
+    static uint32_t done_tick = (uint32_t)-1;
+    if (done_tick == vm->tick || ah_next_movie[0]) return as_undef();
+    done_tick = vm->tick;
+    AsVal fn = as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "f_exit"));
+    if (fn.t == V_OBJ) as_call(vm, fn, as_objv(&vm->root->obj), 0, NULL);
+    return as_undef();
+}
+
 // ---- the unlock pop-up ---------------------------------------------------------------
 // DisplayUnlock(type) (0 hat, 1 minigame, 2 achievement): the exe kept hud_unlock.pak over
 // the game and passed each unlock to its f_DisplayUnlock(type, data), which queues the
@@ -607,6 +620,10 @@ static const Patch patches[] = {
     // Vita has no rumble
     {"pause.pak", 0x45e78, {0x96, 0x15, 0x00, 0x04, 0x05, 0x04, 0x02, 0x03}, {0x99, 0x02, 0x00, 0xcb, 0x00},
      "no vibration option"},
+    // f_BuildMainOptionsMenu: jump over the CREDITS item (text 25) to the end of the menu; the
+    // credits text lived in the exe, so the roll would be empty
+    {"pause.pak", 0x44b38, {0x96, 0x14, 0x00, 0x04, 0x04, 0x04, 0x03, 0x03}, {0x99, 0x02, 0x00, 0x3a, 0x00},
+     "no credits option"},
 };
 
 void ah_patch_movie(const char *file, Movie *m) {
@@ -812,6 +829,6 @@ void ah_host_init(AsVm *vm) {
     DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(ListenForKeyBinding);
     DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag); DEF(f_SetLoadingLevelText); DEF(DisplayUnlock);
     DEF(f_PDALoadLevelArray); DEF(f_PDALoadLiveLevelArray); DEF(f_PDAGetNumLiveLevelsInPack); DEF(f_PDAGetNumLivePacks);
-    DEF(f_PDALiveLevelIndexToPublisherId); DEF(f_PDAGetLiveLevelName); DEF(f_PDASetLevelBoxText);
+    DEF(f_PDALiveLevelIndexToPublisherId); DEF(f_PDAGetLiveLevelName); DEF(f_PDASetLevelBoxText); DEF(f_SetCreditText);
 #undef DEF
 }
