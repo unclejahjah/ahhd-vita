@@ -558,6 +558,7 @@ static int as_mode(int argc, char **argv) {
     cc_host_init(vm);
     ah_host_init(vm);
     ah_log = host_ah_log;
+    if (getenv("CC_DCT")) printf("strings: %d from %s\n", ah_load_strings(getenv("CC_DCT")), getenv("CC_DCT"));   // data/loc/en.dct
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
     if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
         printf("  couldn't read save %s\n", getenv("CC_SAVE"));

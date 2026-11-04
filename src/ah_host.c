@@ -4,6 +4,7 @@
 #include "ah_host.h"
 #include "cc_host.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -253,13 +254,51 @@ static AsVal QuitTo(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 // outside the game (console_version false). That frame's script is run once on a clip of
 // its own, nowhere in the display, so its test stubs stay out of the game's way; then
 // f_GetText answers for the exe. Answers are kept.
+// The exe's own table is data/loc/<language>.dct; when the front end loads it
+// (ah_load_strings), string N is its Nth record and f_GetText is only the fallback (the
+// SWF's copy is older and lacks some, e.g. 347 "Exit Game").
 
 #define MAX_TEXT 1024
 static char *texts[MAX_TEXT];
+static char *dct[MAX_TEXT];   // 1-based
+static int ndct;
 static AsMc *text_clip;
 static int text_tried;
 
+static uint32_t le32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+
+// A .dct: u32 count (top bit set), u32 1, then records of u32 key bytes, u32 value bytes,
+// u32 character count, the key and the value (UTF-8, both NUL terminated).
+int ah_load_strings(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *d = len > 8 ? malloc(len) : NULL;
+    int ok = d && fread(d, 1, len, f) == (size_t)len;
+    fclose(f);
+    if (!ok) { free(d); return 0; }
+    int count = (int)(le32(d) & 0xffff);
+    long p = 8;
+    int n = 0;
+    while (n < count && n + 1 < MAX_TEXT && p + 12 <= len) {
+        uint32_t kl = le32(d + p), vl = le32(d + p + 4);
+        if (kl > (uint32_t)len || vl > (uint32_t)len || p + 12 + kl + vl > (uint64_t)len) break;
+        const char *v = (const char *)d + p + 12 + kl;
+        free(dct[n + 1]);
+        dct[n + 1] = vl ? strndup(v, vl) : strdup("");
+        n++;
+        p += 12 + kl + vl;
+    }
+    free(d);
+    ndct = n;
+    for (int i = 0; i < MAX_TEXT; i++) { free(texts[i]); texts[i] = NULL; }
+    return n;
+}
+
 static const char *text_for_number(AsVm *vm, int n) {
+    if (n > 0 && n <= ndct && n < MAX_TEXT) return dct[n];
     if (n <= 0 || n >= MAX_TEXT) return NULL;
     if (texts[n]) return texts[n];
     if (!text_tried) {

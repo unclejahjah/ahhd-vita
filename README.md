@@ -53,7 +53,7 @@ The default Vita build (`src/ah_viewer.c`) is an animation viewer for the game's
    ```
 2. Install the VPK with VitaShell.
 3. Copy the `game` and `levels` folders from your install's `data` folder to `ux0:data/AlienHominidHD/`, so that `ux0:data/AlienHominidHD/game/alien.pak` exists. About 25 MB.
-   For text copy `fonts` too, and for sound copy `sounds` (5 MB) and `music` (134 MB). The game runs silent without them.
+   For text copy `fonts` and `loc` too, and for sound copy `sounds` (5 MB) and `music` (134 MB). The game runs silent without them.
 
 Controls: Up/Down picks the movie, Left/Right the animation (or the root frame when a movie has no labels), L/R zooms, the left stick pans, CROSS resets the view, SELECT+Up toggles the 60 fps cap, and START quits.
 

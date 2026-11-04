@@ -498,6 +498,7 @@ int main(void) {
     vm->sound_set = vita_sound_set;
     cc_host_init(vm);
     ah_host_init(vm);
+    ah_load_strings(DATA_DIR "loc/en.dct");   // the menus' words (the SWF's copy is the fallback)
     // the PC copy's data/sounds and data/music; the game runs silent without them
     audio_init(DATA_DIR);
     cc_music_play = audio_music_play;
