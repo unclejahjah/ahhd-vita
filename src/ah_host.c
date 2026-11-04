@@ -270,11 +270,25 @@ int ah_request_pause(AsVm *vm, int port) {
     return 1;
 }
 
+static char root_file[64];   // the root movie's file ("level15.cok6")
+
+// The game the pause menu's How to Play describes (its currentgamex): the exe kept one
+// pause.pak for the whole run, so the main menu's choice was still there; here the layer
+// is new each time, so it comes from the movie being played.
+static const char *current_gamex(void) {
+    static const char *const own[] = {"pdagames", "chal12", "chal31", "chal34", "neutron", "pinata", "ssmm"};
+    for (size_t i = 0; i < sizeof own / sizeof *own; i++)
+        if (!strncasecmp(root_file, own[i], strlen(own[i]))) return own[i];
+    if (!strncasecmp(root_file, "pudding", 7)) return "ayce";
+    return "ah";
+}
+
 static void set_root(AsVm *vm, Movie *m) { vm->root = as_mc_new(vm, m, &m->root, NULL, 0); }
 
 int ah_start(AsVm *vm, const char *first) {
     Movie *m = vm->loader(vm, first);
     if (!m) return 0;
+    snprintf(root_file, sizeof root_file, "%s", first);
     set_root(vm, m);
     return 1;
 }
@@ -493,6 +507,7 @@ static void run_as_root(AsVm *vm, AsMc **clip, int keep_tick) {
 static int change_root(AsVm *vm, const char *file) {
     Movie *m = vm->loader(vm, file);
     if (!m) return 0;
+    snprintf(root_file, sizeof root_file, "%s", file);
     // as in Flash, a new root movie silences the old one's sounds (car engines loop)
     if (ah_sfx_stop_all) ah_sfx_stop_all();
     music_pause(0);
@@ -542,6 +557,8 @@ const char *ah_tick(AsVm *vm) {
         Movie *o = vm->loader(vm, "pause.pak");
         vm->overlay = o ? as_mc_new(vm, o, &o->root, NULL, 0) : NULL;
         if (!o) ah_paused = 0;
+        if (vm->overlay && ah_paused)
+            as_set(vm, as_objv(&vm->overlay->obj), as_atom(vm, "currentgamex"), as_strv(as_str(vm, current_gamex())));
     }
     if (vm->overlay) run_as_root(vm, &vm->overlay, !ah_paused);   // the overlay runs as its own _root
     if (overlay_close) {
