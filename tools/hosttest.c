@@ -703,12 +703,23 @@ static int as_mode(int argc, char **argv) {
         }
         if (getenv("AS_CHILDREN") && getenv("AS_TRACE_EVERY") && f % atoi(getenv("AS_TRACE_EVERY")) == 0) {
             int found;   // AS_CHILDREN=path: the named clips in it
-            AsVal v = as_resolve_path(vm, vm->root, getenv("AS_CHILDREN"), &found);
+            const char *cp = getenv("AS_CHILDREN");
+            AsMc *base = vm->root;
+            if (cp[0] == '@' && vm->overlay) { base = vm->overlay; cp++; }   // in the menu layer
+            AsVal v = *cp ? as_resolve_path(vm, base, cp, &found) : (found = 1, as_objv(&base->obj));
             if (found && v.t == V_OBJ && v.o->type == OBJ_MC) {
                 AsMc *mc = (AsMc *)v.o;
                 printf("  [children %d]", f);
-                for (int i = 0; i < mc->ndisp; i++)
-                    if (mc->disp[i].mc && mc->disp[i].mc->name) printf(" %s#%d@%.1f,%.1f", mc->disp[i].mc->name->s, mc->disp[i].cid, mc->disp[i].mc->m.tx / 20, mc->disp[i].mc->m.ty / 20);
+                for (int i = 0; i < mc->ndisp; i++) {
+                    AsMc *k = mc->disp[i].mc;
+                    if (!k) { printf(" [cid %d]", mc->disp[i].cid); continue; }
+                    printf(" %s#%d@%.1f,%.1f%s", k->name ? k->name->s : "-", mc->disp[i].cid, k->m.tx / 20, k->m.ty / 20,
+                           k->visible ? "" : "(hidden)");
+                    if (getenv("AS_CHILDREN_CX"))
+                        printf("[a%.0f cx %.2f,%.2f,%.2f,%.2f+%.0f,%.0f,%.0f,%.0f clip %d n%d]", k->alpha, k->cx.mul[0], k->cx.mul[1],
+                               k->cx.mul[2], k->cx.mul[3], k->cx.add[0], k->cx.add[1], k->cx.add[2], k->cx.add[3], mc->disp[i].clip,
+                               k->ndisp);
+                }
                 printf("\n");
             }
         }

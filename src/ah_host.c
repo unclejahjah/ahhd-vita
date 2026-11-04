@@ -26,7 +26,7 @@ static void log_call(AsVm *vm, const char *name, int argc, AsVal *argv) {
         log_call(vm, #fn, argc, argv);                                           \
         return ret;                                                              \
     }
-LOGGED(MenuRequestIsFullGame, as_undef())
+LOGGED(MenuRequestIsFullGame, as_bool(1))   // the full game, not the trial
 LOGGED(MEMCARD_Start, as_undef())
 LOGGED(MoveKeyboardUserToPort, as_undef())
 LOGGED(DropMeFromGame, as_undef())
@@ -37,7 +37,6 @@ LOGGED(CreateLocalGame, as_undef())
 LOGGED(CancelGame, as_undef())
 LOGGED(StopControllerPairing, as_undef())
 LOGGED(ShowSignInScreen, as_undef())
-LOGGED(QuitTo, as_undef())
 LOGGED(EndingAttract, as_undef())
 LOGGED(MenuAchievements, as_undef())
 LOGGED(MenuMultiplayer, as_undef())
@@ -240,6 +239,13 @@ static AsVal ChangeMovie(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+// QuitTo("menu.cok6"): leave the game for a front-end movie ("goto_menu": the main menu)
+static AsVal QuitTo(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    log_call(vm, "QuitTo", argc, argv);
+    const char *name = as_tostr(vm, ARG(0))->s;
+    if (!strcmp(name, "goto_menu")) return ChangeMovie(vm, this_, 1, (AsVal[]){as_strv(as_str(vm, "menu.cok6"))});
+    return ChangeMovie(vm, this_, argc, argv);
+}
 
 // ---- the game's words -------------------------------------------------------------
 // Text fields ask for string N ("ntext = N"). The exe had the table; pause.pak carries the
@@ -275,6 +281,11 @@ static const char *text_for_number(AsVm *vm, int n) {
     AsVal r = as_call(vm, fn, as_objv(&text_clip->obj), 1, &arg);
     if (r.t != V_STR) return NULL;
     texts[n] = strdup(as_tostr(vm, r)->s);
+    if (ah_log && !strcmp(texts[n], "NO TEXT FOUND")) {
+        char line[64];
+        snprintf(line, sizeof line, "no text for ntext %d", n);
+        ah_log(line);
+    }
     return texts[n];
 }
 
