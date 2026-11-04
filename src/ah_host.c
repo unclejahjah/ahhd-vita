@@ -4,10 +4,12 @@
 #include "ah_host.h"
 #include "cc_host.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 void (*ah_log)(const char *line);
 
@@ -135,16 +137,33 @@ static AsVal PauseMusic(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
-// SetMusicVolume(0..100), SetSfxVolume(0..100), from the options menu
+// SetMusicVolume(0..100), SetSfxVolume(0..100) and the Get pair, from the options menu
+// (its sliders start from the Get values)
+static double music_volume = 100, sfx_volume = 100;
+
+static double volume_arg(AsVm *vm, AsVal v, double old) {
+    double n = as_tonum(vm, v);
+    return isnan(n) ? old : n < 0 ? 0 : n > 100 ? 100 : n;
+}
 static AsVal SetMusicVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    if (ah_audio_volumes) ah_audio_volumes((float)as_tonum(vm, ARG(0)) / 100, -1);
+    music_volume = volume_arg(vm, ARG(0), music_volume);
+    if (ah_audio_volumes) ah_audio_volumes((float)music_volume / 100, -1);
     return as_undef();
 }
 static AsVal SetSfxVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    if (ah_audio_volumes) ah_audio_volumes(-1, (float)as_tonum(vm, ARG(0)) / 100);
+    sfx_volume = volume_arg(vm, ARG(0), sfx_volume);
+    if (ah_audio_volumes) ah_audio_volumes(-1, (float)sfx_volume / 100);
     return as_undef();
+}
+static AsVal GetMusicVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_num(music_volume);
+}
+static AsVal GetSfxVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_num(sfx_volume);
 }
 
 static int pause_opened;   // the overlay is the in-game pause menu (START), not the main menu
@@ -248,12 +267,60 @@ static AsVal ChangeMovie(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
+// SetFlashGlobal, as cc_host's, but a player's score is kept whole: the end-of-level
+// screen adds an accuracy bonus of 10 * hits / shots without rounding it, and the next
+// level's HUD then showed the score with a string of decimals.
+static AsVal SetFlashGlobal(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    const char *name = as_tostr(vm, ARG(0))->s;
+    AsVal v = ARG(1);
+    int n = 0;
+    if (v.t == V_NUM && sscanf(name, "GLOBAL_alien%*d_score%n", &n) >= 0 && n && !name[n] && isfinite(v.n))
+        v = as_num(trunc(v.n));
+    cc_set_flash_global(vm, name, v);
+    return as_undef();
+}
+
 // QuitTo("menu.cok6"): leave the game for a front-end movie ("goto_menu": the main menu)
 static AsVal QuitTo(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     log_call(vm, "QuitTo", argc, argv);
     const char *name = as_tostr(vm, ARG(0))->s;
     if (!strcmp(name, "goto_menu")) return ChangeMovie(vm, this_, 1, (AsVal[]){as_strv(as_str(vm, "menu.cok6"))});
     return ChangeMovie(vm, this_, argc, argv);
+}
+
+// ---- changes to the game's own scripts, for the Vita ------------------------------------
+// Each one is checked byte for byte before it is applied, so another version of a file is
+// left alone.
+
+typedef struct {
+    const char *file;          // e.g. "pause.pak"
+    uint32_t at;               // offset in the SWF
+    uint8_t expect[8];         // what must be there
+    uint8_t put[5];            // what goes there
+    const char *why;
+} Patch;
+
+static const Patch patches[] = {
+    // f_BuildPlayerOptionsMenu: jump over the VIBRATION item (text 31) to the next one; the
+    // Vita has no rumble
+    {"pause.pak", 0x45e78, {0x96, 0x15, 0x00, 0x04, 0x05, 0x04, 0x02, 0x03}, {0x99, 0x02, 0x00, 0xcb, 0x00},
+     "no vibration option"},
+};
+
+void ah_patch_movie(const char *file, Movie *m) {
+    const char *base = strrchr(file, '/');
+    base = base ? base + 1 : file;
+    for (size_t i = 0; i < sizeof patches / sizeof *patches; i++) {
+        const Patch *p = &patches[i];
+        if (strcasecmp(base, p->file) || p->at + 8 > m->len || memcmp(m->data + p->at, p->expect, 8)) continue;
+        memcpy(m->data + p->at, p->put, 5);
+        if (ah_log) {
+            char line[96];
+            snprintf(line, sizeof line, "patched %s: %s", p->file, p->why);
+            ah_log(line);
+        }
+    }
 }
 
 // ---- the game's words -------------------------------------------------------------
@@ -415,12 +482,12 @@ void ah_host_init(AsVm *vm) {
     as_def_fn(vm, g, "IsSigningIn", ret_false);         // Xbox profile sign-in screen
     as_def_fn(vm, g, "IsKeyboardJoinButtonDown", ret_false);
 #define DEF(fn) as_def_fn(vm, g, #fn, fn)
-    DEF(ChangeMovie); DEF(UnPause); DEF(MenuRequestIsFullGame); DEF(MEMCARD_Start); DEF(SetPlaying);
+    DEF(ChangeMovie); DEF(SetFlashGlobal); DEF(UnPause); DEF(MenuRequestIsFullGame); DEF(MEMCARD_Start); DEF(SetPlaying);
     DEF(TurnMainMenuOn); DEF(MoveKeyboardUserToPort); DEF(DropMeFromGame);
     DEF(ClearUserToControllerBindings); DEF(StartControllerPairing); DEF(SetBackgroundAlpha);
     DEF(GetPrimaryUserPort); DEF(CreateLocalGame); DEF(CancelGame); DEF(StopControllerPairing);
     DEF(ShowSignInScreen); DEF(QuitTo); DEF(EndingAttract); DEF(MenuAchievements); DEF(MenuMultiplayer);
     DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(ListenForKeyBinding);
-    DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag);
+    DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag);
 #undef DEF
 }

@@ -137,6 +137,8 @@ HostFont *hostfont_load(const char *fnt_path, const char *dds_path, char *err, i
         while (mask[k] && !(mask[k] >> shift[k] & 1)) shift[k]++;
     }
 
+    int sdf_gain = 4;
+    if (getenv("HOSTFONT_SDF_GAIN")) sdf_gain = atoi(getenv("HOSTFONT_SDF_GAIN"));   // for tuning on the desktop
     // shelf-pack the glyphs into a 512-wide atlas with a pixel of space around each
     const unsigned AW = 512;
     unsigned x = 1, y = 1, row_h = 0;
@@ -163,6 +165,13 @@ HostFont *hostfont_load(const char *fnt_path, const char *dds_path, char *err, i
                 uint32_t v = ru32(px + ((size_t)(s.y + j) * dw + s.x + i) * 4);
                 uint8_t *o = a->rgba + ((size_t)(d.y + j) * AW + d.x + i) * 4;
                 for (int k = 0; k < 4; k++) o[k] = mask[k] ? (v & mask[k]) >> shift[k] : 255;
+                // Alien Hominid HD's page is a distance field (alpha 0.5 = the glyph's edge,
+                // fading out over ~8 pixels); the exe cut it at the edge. Without that the
+                // letters come out as soft glows, so sharpen the ramp around the edge.
+                if (png) {
+                    int al = (o[3] - 128) * sdf_gain + 128;
+                    o[3] = al < 0 ? 0 : al > 255 ? 255 : al;
+                }
             }
         // the glyph quad, in font pixels from the top-left of the line
         float x0 = g->xoff, y0 = g->yoff, x1 = x0 + s.w, y1 = y0 + s.h;

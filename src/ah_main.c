@@ -345,6 +345,7 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
             snprintf(g_last_error, sizeof g_last_error, "%s: %s", name, err);
             return NULL;
         }
+        ah_patch_movie(path, m);
         for (int c = 0; c < 65536; c++) {   // bitmaps become textures
             if (m->chars[c].type != CHAR_BITMAP) continue;
             Bitmap *bm = m->chars[c].ptr;

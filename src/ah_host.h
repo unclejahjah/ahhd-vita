@@ -16,6 +16,8 @@ int ah_request_pause(AsVm *vm, int port);
 // The game's text table, data/loc/en.dct (or another language); the number of strings, 0 if
 // unreadable. Without it the SWF's own older copy answers.
 int ah_load_strings(const char *path);
+// Vita changes to the game's own scripts (e.g. no vibration option); call on each loaded file.
+void ah_patch_movie(const char *file, Movie *m);
 extern int ah_paused;
 extern float ah_background_alpha;
 // sound, set by the front end: pause/resume music, volumes 0..1 (negative: unchanged),

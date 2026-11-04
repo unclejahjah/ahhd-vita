@@ -492,6 +492,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 snprintf(path, sizeof path, "%s/%s", dirpath, de->d_name);
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
+                if (m) ah_patch_movie(path, m);
                 int fixed = m ? cc_repair_level(m) : 0;
     if (m && getenv("CC_DUMP_SHAPE") && !strcmp(base, "MENU.swf")) {
         extern void cc_dump_shape(Movie *m, int cid);
