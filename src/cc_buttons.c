@@ -77,8 +77,10 @@ static void rect(Poly *p, float x0, float y0, float x1, float y1) {
 }
 
 // the symbol for a button, centred at cx,cy, about s across
+static float symbol_weight = 1;   // stroke width scale (AH's small prompts draw bolder)
+
 static void symbol(Poly *p, int which, float cx, float cy, float s) {
-    float t = s * 0.17f;   // stroke width
+    float t = s * 0.17f * symbol_weight;   // stroke width
     switch (which) {
     case CC_BTN_CROSS: {   // an X as one outline (a plus turned 45 degrees)
         float L = s * 0.5f, w = t * 0.55f;
@@ -568,6 +570,8 @@ int cc_buttons_ah_glyphs(Movie *m) {
     for (int c = 0; c < 65536; c++) {
         if (m->chars[c].type != CHAR_SPRITE) continue;
         Sprite *sp = m->chars[c].ptr;
+        Place *balls[8];
+        int nballs = 0;
         for (int l = 0; l < sp->nlabels; l++) {
             int f = sp->labels[l].frame;
             if (f < 0 || f >= sp->nframes) continue;
@@ -596,7 +600,9 @@ int cc_buttons_ah_glyphs(Movie *m) {
                             bb = (Box){fminf(bb.x0, fb.x0), fminf(bb.y0, fb.y0), fmaxf(bb.x1, fb.x1), fmaxf(bb.y1, fb.y1)};
                         }
                         Poly sym = {0};
-                        symbol(&sym, face[k].which, (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, (bb.x1 - bb.x0) * 0.5f);
+                        symbol_weight = 1.45f;   // these are drawn small: bolder lines read better
+                        symbol(&sym, face[k].which, (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, (bb.x1 - bb.x0) * 0.52f);
+                        symbol_weight = 1;
                         append_fill(copy, fill_from(&sym, (const uint8_t[4]){255, 255, 255, 255}));
                         int pid = free_char_id(m);
                         if (pid <= 0) continue;
@@ -604,6 +610,7 @@ int cc_buttons_ah_glyphs(Movie *m) {
                         m->chars[pid].ptr = clone_sprite(inner, pid, sid);
                         fr->places[i].cid = pid;
                         fr->places[i].uid = 0x7f000000u + pid;   // a new instance, not the shared ball's
+                        if (nballs < 8) balls[nballs++] = &fr->places[i];
                         done++;
                     }
                 }
@@ -625,6 +632,13 @@ int cc_buttons_ah_glyphs(Movie *m) {
                     done++;
                 }
             }
+        }
+        // the game draws Cross a size bigger than the others: all at the smallest
+        float smallest = 1e30f;
+        for (int b = 0; b < nballs; b++) smallest = fminf(smallest, fabsf(balls[b]->m.a));
+        for (int b = 0; b < nballs; b++) {
+            float k = smallest / fabsf(balls[b]->m.a);
+            balls[b]->m.a *= k; balls[b]->m.b *= k; balls[b]->m.c *= k; balls[b]->m.d *= k;
         }
     }
     return done;
