@@ -578,8 +578,9 @@ int cc_buttons_ah_glyphs(Movie *m) {
                     const Sprite *inner = NULL;
                     Shape *s = first_shape(m, fr->places[i].cid, &inner);
                     if (!s || s->tessellated) continue;
-                    if (s->nfills == 1) {   // the symbol: white
-                        memcpy(s->fills[0].style.color, "\xff\xff\xff", 3);
+                    if (s->nfills == 1) {   // the game's symbol: drawn on the ball instead (below)
+                        s->fills[0].npoints = 0;
+                        s->fills[0].nloops = 0;
                         done++;
                     } else if (s->nfills >= 5) {   // the shared ball: this button's own copy
                         int sid = free_char_id(m);
@@ -588,6 +589,15 @@ int cc_buttons_ah_glyphs(Movie *m) {
                         m->chars[sid].type = CHAR_SHAPE;
                         m->chars[sid].ptr = copy;
                         colour_ball(copy, face[k].which);
+                        // a clean white symbol, the same size on every ball
+                        Box bb = {1e30f, 1e30f, -1e30f, -1e30f};
+                        for (int q = 0; q < copy->nfills; q++) {
+                            Box fb = fill_box(&copy->fills[q]);
+                            bb = (Box){fminf(bb.x0, fb.x0), fminf(bb.y0, fb.y0), fmaxf(bb.x1, fb.x1), fmaxf(bb.y1, fb.y1)};
+                        }
+                        Poly sym = {0};
+                        symbol(&sym, face[k].which, (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, (bb.x1 - bb.x0) * 0.5f);
+                        append_fill(copy, fill_from(&sym, (const uint8_t[4]){255, 255, 255, 255}));
                         int pid = free_char_id(m);
                         if (pid <= 0) continue;
                         m->chars[pid].type = CHAR_SPRITE;
