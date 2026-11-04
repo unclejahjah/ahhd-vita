@@ -28,12 +28,14 @@ extern char ah_data_dir[256];   // set before the game starts: where game/ and l
 extern AsMc *ah_loading;
 extern AsMc *ah_unlock_layer;   // the unlock banners, drawn over the game
 extern int ah_paused;
+int ah_in_level(void);   // a story level or challenge is running (START pauses, SELECT is its start key)
 extern float ah_background_alpha;
 // sound, set by the front end: pause/resume music, volumes 0..1 (negative: unchanged),
 // stop every sound effect
 extern void (*ah_music_pause)(int paused);
 extern void (*ah_audio_volumes)(float music, float sfx);
 extern void (*ah_sfx_stop_all)(void);
+extern void (*ah_sfx_hold)(int hold);   // freeze (1) or resume (0) the sounds playing now
 extern void (*ah_log)(const char *line);   // optional: where logged calls go
 
 #endif

@@ -14,6 +14,7 @@ void audio_sfx_set(const void *owner, float volume, float pan);   // what owner 
 void audio_music_play(const char *name, int loop);
 void audio_music_stop(void);
 void audio_music_pause(int paused);
+void audio_sfx_hold(int hold);   // 1: freeze the sounds playing now (the pause menu's still play); 0: resume them
 void audio_resumed(void);   // call when the app comes back from being suspended
 void audio_set_volumes(float music, float sfx);   // 0..1; a negative value leaves that one
 

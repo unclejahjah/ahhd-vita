@@ -508,6 +508,7 @@ int main(void) {
     ah_music_pause = audio_music_pause;
     ah_audio_volumes = audio_set_volumes;
     ah_sfx_stop_all = stop_all_sfx;
+    ah_sfx_hold = audio_sfx_hold;
     ah_save_load(DATA_DIR "save.dat");   // unlocks, Load Level, options and volumes
     as_render_init(vm);
     if (!ah_start(vm, "legal.pak")) {
@@ -541,6 +542,12 @@ int main(void) {
         if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
         if (debug) memset(cc_keys, 0, sizeof cc_keys);
         else map_pad(&pad);
+        // in a level, START only opens the pause menu, and SELECT (alone) is the key the HUD
+        // reads to spend a continue; Select with Start or Up stays the debug combos
+        if (ah_in_level() && !vm->overlay) {
+            cc_keys[K_START] = 0;
+            if (debug && !(pad.buttons & (SCE_CTRL_START | SCE_CTRL_UP))) cc_keys[K_START] = 1;
+        }
         // START in a level opens the pause menu (the exe's job in the original); the menus
         // read START themselves
         if (!debug && (pressed & SCE_CTRL_START) && !vm->overlay) ah_request_pause(vm, 0);

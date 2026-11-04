@@ -33,6 +33,7 @@ typedef struct {
     float vl, vr;
     int loops;                     // further plays after this one
     const void *owner;
+    int held;                      // frozen while the game is paused
 } Voice;
 
 static char g_dir[128];
@@ -184,7 +185,7 @@ static int mix_thread(SceSize args, void *argp) {
         lock();
         for (int v = 0; v < MAX_VOICES; v++) {
             Voice *vo = &g_voices[v];
-            if (!vo->active) continue;
+            if (!vo->active || vo->held) continue;
             Sfx *s = &g_sfx[vo->sfx];
             if (s->state != SFX_READY) {
                 if (s->state == SFX_FAILED || s->state == SFX_NONE) vo->active = 0;
@@ -326,3 +327,11 @@ void audio_sfx_set(const void *owner, float volume, float pan) {
 }
 
 void audio_resumed(void) { g_resumed = 1; }
+
+void audio_sfx_hold(int hold) {
+    if (g_port < 0) return;
+    lock();
+    for (int v = 0; v < MAX_VOICES; v++)
+        if (g_voices[v].active) g_voices[v].held = hold;
+    unlock();
+}

@@ -129,6 +129,7 @@ static AsVal TurnMainMenuOn(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 void (*ah_music_pause)(int paused);
 void (*ah_audio_volumes)(float music, float sfx);
 void (*ah_sfx_stop_all)(void);
+void (*ah_sfx_hold)(int hold);
 
 static void music_pause(int paused) {
     if (ah_music_pause) ah_music_pause(paused);
@@ -238,6 +239,7 @@ static AsVal UnPause(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     ah_paused = 0;
     overlay_close = 1;
     music_pause(0);
+    if (ah_sfx_hold) ah_sfx_hold(0);
     // pause.pak's first frame sets g_bNoPause while its menu is up; the exe let the game
     // pause again once it closed. (Quitting from it sets g_bNoPause after this call.)
     if (pause_opened) cc_set_flash_global(vm, "g_bNoPause", as_num(0));
@@ -267,10 +269,17 @@ int ah_request_pause(AsVm *vm, int port) {
     ah_paused = 1;
     pause_opened = 1;
     music_pause(1);
+    if (ah_sfx_hold) ah_sfx_hold(1);   // the game's sounds wait too (looping ones would drone on)
     return 1;
 }
 
 static char root_file[64];   // the root movie's file ("level15.cok6")
+
+// A story level or challenge is the root: there START is the pause menu, and SELECT is the
+// "start" key the HUD reads to spend a continue (a coin) after the last life
+int ah_in_level(void) {
+    return !strncasecmp(root_file, "level", 5) || !strncasecmp(root_file, "chal", 4);
+}
 
 // The game the pause menu's How to Play describes (its currentgamex): the exe kept one
 // pause.pak for the whole run, so the main menu's choice was still there; here the layer
@@ -752,7 +761,7 @@ static const char *swf_text(AsVm *vm, int n) {
 // buttons; the shoulder ones show as L1/R1.
 static const char *const VITA_BUTTONS[][2] = {
     {"menu_select", "x"}, {"menu_back", "circle"}, {"menu_x", "square"}, {"menu_y", "triangle"},
-    {"menu_lt", "l1"},    {"menu_rt", "r1"},       {"start", "start"}, {"jump", "x"},
+    {"menu_lt", "l1"},    {"menu_rt", "r1"},       {"start", "start"}, {"select", "select"}, {"jump", "x"},
     {"shoot", "square"},  {"grenade", "circle"},   {"interact", "triangle"},
     {"roll_left", "l1"},  {"roll_right", "r1"},
 };
@@ -763,6 +772,7 @@ static AsVal GetInputBinding(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     if (b.t != V_OBJ) return as_bool(0);
     const char *action = as_tostr(vm, as_get(vm, b, as_atom(vm, "s_action")))->s;
     const char *button = NULL;
+    if (!strcmp(action, "start") && ah_in_level()) action = "select";   // see ah_in_level
     for (size_t i = 0; i < sizeof VITA_BUTTONS / sizeof *VITA_BUTTONS; i++)
         if (!strcmp(action, VITA_BUTTONS[i][0])) button = VITA_BUTTONS[i][1];
     if (!button) {
