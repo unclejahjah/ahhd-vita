@@ -225,6 +225,8 @@ static char ah_next_movie[64];
 // scoreboard). Here: show it, load the level once it has been drawn, then hand over.
 
 static int loading_frames;       // ticks it has run
+#define LOAD_AT 4                // the tick the level loads on (its first two draw nothing)
+#define PRIME_TICKS 3            // level ticks run behind it
 static char loading_target[64];  // file still to load, "" once loaded
 
 static int wants_loading_screen(const char *file) {
@@ -259,6 +261,7 @@ static int change_root(AsVm *vm, const char *file) {
 }
 
 static void end_loading(AsVm *vm) {
+    if (ah_log) ah_log("loading screen done");
     ah_loading = NULL;
     as_set(vm, as_objv(vm->global), as_atom(vm, "__ah_loading"), as_undef());
 }
@@ -268,7 +271,7 @@ const char *ah_tick(AsVm *vm) {
     if (ah_loading) {   // only the loading screen runs
         run_as_root(vm, &ah_loading, 0);
         loading_frames++;
-        if (loading_target[0] && loading_frames >= 2) {   // it is on screen: load now
+        if (loading_target[0] && loading_frames >= LOAD_AT) {   // its art is on screen: load now
             snprintf(changed, sizeof changed, "%s", loading_target);
             loading_target[0] = 0;
             int ok = change_root(vm, changed);
@@ -276,7 +279,11 @@ const char *ah_tick(AsVm *vm) {
             if (!ok) end_loading(vm);
             return ok ? changed : NULL;
         }
-        if (!loading_target[0] && (as_tobool(vm, cc_flash_global(vm, "g_bLevelLoaded")) || loading_frames > 30 * 30))
+        // the level's first frames load its parts (hud, players, enemies, backgrounds):
+        // run them behind the loading screen, or the screen goes black while they load
+        if (!loading_target[0] && loading_frames > LOAD_AT && loading_frames <= LOAD_AT + PRIME_TICKS)
+            as_tick(vm);
+        if (!loading_target[0] && loading_frames > LOAD_AT + PRIME_TICKS && (as_tobool(vm, cc_flash_global(vm, "g_bLevelLoaded")) || loading_frames > 30 * 30))
             end_loading(vm);
         return NULL;
     }
@@ -387,8 +394,9 @@ void ah_patch_movie(const char *file, Movie *m) {
 // its own, nowhere in the display, so its test stubs stay out of the game's way; then
 // f_GetText answers for the exe. Answers are kept.
 // The exe's own table is data/loc/<language>.dct; when the front end loads it
-// (ah_load_strings), string N is its Nth record and f_GetText is only the fallback (the
-// SWF's copy is older and lacks some, e.g. 347 "Exit Game").
+// (ah_load_strings), string N is its Nth record. It fills in what f_GetText lacks (e.g.
+// 347 "Exit Game"); f_GetText comes first, as the PC table numbers some strings differently
+// (the loading screen's tips, 280 on, came out blank from it).
 
 #define MAX_TEXT 1024
 static char *texts[MAX_TEXT];
@@ -429,8 +437,15 @@ int ah_load_strings(const char *path) {
     return n;
 }
 
+static const char *swf_text(AsVm *vm, int n);
+
 static const char *text_for_number(AsVm *vm, int n) {
-    if (n > 0 && n <= ndct && n < MAX_TEXT) return dct[n];
+    const char *s = swf_text(vm, n);
+    if ((!s || !strcmp(s, "NO TEXT FOUND")) && n > 0 && n <= ndct && n < MAX_TEXT) return dct[n];
+    return s;
+}
+
+static const char *swf_text(AsVm *vm, int n) {
     if (n <= 0 || n >= MAX_TEXT) return NULL;
     if (texts[n]) return texts[n];
     if (!text_tried) {
@@ -490,6 +505,19 @@ static AsVal GetInputBinding(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 }
 
 // SetTextToGamerTag(port, field, field2): the signed-in profile's name. The Vita has none to show.
+// f_SetLoadingLevelText(daText, daBgText, level, area): the loading screen's title, e.g.
+// "LEVEL 1-1" (the executable fills both fields, the text and its shadow)
+static AsVal f_SetLoadingLevelText(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    log_call(vm, "f_SetLoadingLevelText", argc, argv);
+    int level = (int)as_tonum(vm, ARG(2)), area = (int)as_tonum(vm, ARG(3));
+    char t[32] = "";
+    if (area > 0 && level > 0) snprintf(t, sizeof t, "LEVEL %d-%d", area, level);
+    for (int i = 0; i < argc && i < 2; i++)
+        if (argv[i].t == V_OBJ) as_set(vm, argv[i], as_atom(vm, "text"), as_strv(as_str(vm, t)));
+    return as_undef();
+}
+
 static AsVal SetTextToGamerTag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     for (int i = 1; i < argc && i < 3; i++)
@@ -545,6 +573,6 @@ void ah_host_init(AsVm *vm) {
     DEF(GetPrimaryUserPort); DEF(CreateLocalGame); DEF(CancelGame); DEF(StopControllerPairing);
     DEF(ShowSignInScreen); DEF(QuitTo); DEF(EndingAttract); DEF(MenuAchievements); DEF(MenuMultiplayer);
     DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(ListenForKeyBinding);
-    DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag);
+    DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag); DEF(f_SetLoadingLevelText);
 #undef DEF
 }
