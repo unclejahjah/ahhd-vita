@@ -11,7 +11,7 @@ endif()
 project(ahhd_vita C)
 include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
 
-set(VITA_APP_NAME "Alien Hominid HD Vita")
+set(VITA_APP_NAME "Alien Hominid")
 set(VITA_TITLEID  "AHHD00001")
 set(VITA_VERSION  "00.02")
 
