@@ -583,6 +583,11 @@ int main(void) {
                 as_render_mc(ah_loading, sl, CX_IDENTITY, &vb);
             } else {
                 as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+                if (ah_unlock_layer) {   // unlock banners
+                    float ku = SCREEN_W / ah_unlock_layer->movie->stage_w;
+                    Mat su = {ku / 20, 0, 0, ku / 20, 0, 0};
+                    as_render_mc(ah_unlock_layer, su, CX_IDENTITY, &vb);
+                }
             }
             if (vm->overlay && !ah_loading) {   // the menu/pause layer
                 float ko = SCREEN_W / vm->overlay->movie->stage_w;

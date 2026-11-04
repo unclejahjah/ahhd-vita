@@ -62,9 +62,11 @@ static AsVal ret_undef(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_undef();
 }
 
-// Options are stored per controller port in a small byte array the scripts
-// address with MEMCARD_Seek(offset, port) then MEMCARD_Read(port) / MEMCARD_Write(value, port).
-// Offsets seen: 69 vibration, 70 aim style, 73 turbo fire. All default to 0.
+// The memory card: 256 bytes per controller port, which the scripts address with
+// MEMCARD_Seek(port, offset), then MEMCARD_Read(port) / MEMCARD_Write(port, value), each
+// moving on a byte. Offsets: hats 0-31 (f_UnlockHat), Load Level from 32, minigames around
+// 49-56 (f_UnlockMiniGame), 58 on Missile Mastar scores, 64-66, 69 vibration, 70 aim
+// style, 72 lives, 73 turbo fire; the highest the scripts use is 81. All start at 0.
 #define MEMCARD_PORTS 4
 #define MEMCARD_SIZE 256
 static unsigned char memcard[MEMCARD_PORTS][MEMCARD_SIZE];
@@ -77,8 +79,8 @@ static int port_arg(AsVm *vm, AsVal v) {
 
 static AsVal memcard_seek(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    int off = (int)as_tonum(vm, ARG(0));
-    memcard_pos[port_arg(vm, ARG(1))] = off >= 0 && off < MEMCARD_SIZE ? off : 0;
+    int off = (int)as_tonum(vm, ARG(1));
+    memcard_pos[port_arg(vm, ARG(0))] = off >= 0 && off < MEMCARD_SIZE ? off : 0;
     return as_undef();
 }
 
@@ -92,8 +94,8 @@ static AsVal memcard_read(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 
 static AsVal memcard_write(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
-    int p = port_arg(vm, ARG(1));
-    memcard[p][memcard_pos[p]] = (unsigned char)as_tonum(vm, ARG(0));
+    int p = port_arg(vm, ARG(0));
+    memcard[p][memcard_pos[p]] = (unsigned char)as_tonum(vm, ARG(1));
     memcard_pos[p] = (memcard_pos[p] + 1) % MEMCARD_SIZE;
     return as_undef();
 }
@@ -169,11 +171,11 @@ static AsVal GetSfxVolume(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 
 // ---- the save file -----------------------------------------------------------------
 // The exe wrote the memory-card bytes to disk (hats 0-31, Load Level from 32, minigames
-// around 49-56, options 69-73) and kept the volumes. Here they go to one file: "AHS1",
+// around 49-56, options 69-73) and kept the volumes. Here they go to one file: "AHS2",
 // then each port's 256 bytes, then the music and sound volumes (0-100) as one byte each.
 // ah_save_tick writes it when anything changed; it's written to a temporary name first
 // so a crash mid-write can't lose the old one.
-#define SAVE_MAGIC "AHS1"
+#define SAVE_MAGIC "AHS2"   // "AHS1" files came from a build that mixed up MEMCARD_Seek's arguments: ignored
 static unsigned char saved[MEMCARD_PORTS][MEMCARD_SIZE + 2];
 static char save_path[256];
 
@@ -278,6 +280,46 @@ int ah_start(AsVm *vm, const char *first) {
 
 static char ah_next_movie[64];
 
+// ---- the unlock pop-up ---------------------------------------------------------------
+// DisplayUnlock(type) (0 hat, 1 minigame, 2 achievement): the exe kept hud_unlock.pak over
+// the game and passed each unlock to its f_DisplayUnlock(type, data), which queues the
+// "HAT UNLOCKED" / "MINIGAME UNLOCKED" banner and its sound. Scripts call it mid-tick, so
+// unlocks wait here until the game's tick is done.
+AsMc *ah_unlock_layer;
+static void run_as_root(AsVm *vm, AsMc **clip, int keep_tick);
+static int unlock_queue[16], unlock_n, unlock_count;
+
+static AsVal DisplayUnlock(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    log_call(vm, "DisplayUnlock", argc, argv);
+    if (unlock_n < 16) unlock_queue[unlock_n++] = (int)as_tonum(vm, ARG(0));
+    return as_undef();
+}
+
+static void run_unlocks(AsVm *vm) {
+    if (!ah_unlock_layer && !unlock_n) return;
+    if (!ah_unlock_layer) {
+        Movie *m = vm->loader(vm, "hud_unlock.pak");
+        if (!m) { unlock_n = 0; return; }
+        ah_unlock_layer = as_mc_new(vm, m, &m->root, NULL, 0);
+        as_set(vm, as_objv(vm->global), as_atom(vm, "__ah_unlock"), as_objv(&ah_unlock_layer->obj));   // kept alive
+    }
+    run_as_root(vm, &ah_unlock_layer, 1);
+    if (!unlock_n) return;
+    AsVal fn = as_get(vm, as_objv(&ah_unlock_layer->obj), as_atom(vm, "f_DisplayUnlock"));
+    if (fn.t == V_OBJ) {
+        AsMc *root = vm->root;
+        vm->root = ah_unlock_layer;   // its _root while it runs
+        for (int i = 0; i < unlock_n; i++) {
+            // the data only tells repeats apart: the exe passed something per unlock
+            AsVal args[2] = {as_num(unlock_queue[i]), as_num(++unlock_count)};
+            as_call(vm, fn, as_objv(&ah_unlock_layer->obj), 2, args);
+        }
+        vm->root = root;
+    }
+    unlock_n = 0;
+}
+
 // ---- the loading screen ----------------------------------------------------------------
 // The exe put loading.pak over the screen while it loaded a level. Its script and the exe
 // talk through flash globals: g_bLoaded (the exe: the level is in), g_bLevelLoaded
@@ -347,7 +389,10 @@ const char *ah_tick(AsVm *vm) {
             end_loading(vm);
         return NULL;
     }
-    if (!ah_paused) as_tick(vm);
+    if (!ah_paused) {
+        as_tick(vm);
+        run_unlocks(vm);
+    }
     if (overlay_open) {
         overlay_open = overlay_close = 0;
         Movie *o = vm->loader(vm, "pause.pak");
@@ -635,6 +680,6 @@ void ah_host_init(AsVm *vm) {
     DEF(GetPrimaryUserPort); DEF(CreateLocalGame); DEF(CancelGame); DEF(StopControllerPairing);
     DEF(ShowSignInScreen); DEF(QuitTo); DEF(EndingAttract); DEF(MenuAchievements); DEF(MenuMultiplayer);
     DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(ListenForKeyBinding);
-    DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag); DEF(f_SetLoadingLevelText);
+    DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag); DEF(f_SetLoadingLevelText); DEF(DisplayUnlock);
 #undef DEF
 }

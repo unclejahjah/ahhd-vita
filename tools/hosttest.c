@@ -766,6 +766,7 @@ static int as_mode(int argc, char **argv) {
             render_begin(&vb);
             if (ah_loading) as_render_mc(ah_loading, screen, CX_IDENTITY, &vb);   // the loading screen
             else as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (ah_unlock_layer && !ah_loading) as_render_mc(ah_unlock_layer, screen, CX_IDENTITY, &vb);   // unlock banners
             if (vm->overlay && !ah_loading) as_render_mc(vm->overlay, screen, CX_IDENTITY, &vb);   // menu/pause layer
             if (vb.heat_at >= 0)   // the Vita draws a heat shimmer behind this
                 printf("  [heat] items 0..%d shimmer in %.0f,%.0f - %.0f,%.0f\n", vb.heat_at, vb.heat[0], vb.heat[1],

@@ -25,6 +25,7 @@ int ah_save_tick(void);
 void ah_patch_movie(const char *file, Movie *m);
 // The game's loading screen while a level loads, or NULL. While it is up, draw only it.
 extern AsMc *ah_loading;
+extern AsMc *ah_unlock_layer;   // the unlock banners, drawn over the game
 extern int ah_paused;
 extern float ah_background_alpha;
 // sound, set by the front end: pause/resume music, volumes 0..1 (negative: unchanged),
