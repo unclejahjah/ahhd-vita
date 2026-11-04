@@ -24,6 +24,7 @@ int ah_save_tick(void);
 // Vita changes to the game's own scripts (e.g. no vibration option); call on each loaded file.
 void ah_patch_movie(const char *file, Movie *m);
 // The game's loading screen while a level loads, or NULL. While it is up, draw only it.
+extern char ah_data_dir[256];   // set before the game starts: where game/ and levels/ are
 extern AsMc *ah_loading;
 extern AsMc *ah_unlock_layer;   // the unlock banners, drawn over the game
 extern int ah_paused;

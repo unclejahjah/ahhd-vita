@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <zlib.h>
 
 void (*ah_log)(const char *line);
 
@@ -280,6 +281,136 @@ int ah_start(AsVm *vm, const char *first) {
 
 static char ah_next_movie[64];
 
+// ---- PDA Games ------------------------------------------------------------------------
+// pdagames.pak plays levels the exe read from data/game/pda1.pak (the 50 built in, pack
+// id 0) and pda2-6.pak (the five downloadable packs of 100: ids 1-5). Each is a ZIP
+// holding NAME.PDAG.BREC: 32 bytes, "GADP", 12 bytes, u32 level count, then the levels,
+// each 11 int16s (?, spawn x, y, ?, enemy spawn x, y, scale, exit x, y, scale, object
+// count) and 5 int16s an object (type, x, y, scale, ?). f_PDALoadLevelArray fills the
+// script's a_levelData with one level's numbers, which its f_buildLevel reads in order.
+static uint32_t le32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+char ah_data_dir[256];   // where game/ and levels/ are, e.g. "ux0:data/AlienHominidHD/"
+
+#define PDA_PACKS 6
+static struct { int tried, n; int16_t *v; uint32_t *at; } pda[PDA_PACKS];
+
+static void pda_open(int k) {
+    if (k < 0 || k >= PDA_PACKS || pda[k].tried) return;
+    pda[k].tried = 1;
+    char path[300];
+    snprintf(path, sizeof path, "%sgame/pda%d.pak", ah_data_dir, k + 1);
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *z = len > 30 ? malloc(len) : NULL;
+    int ok = z && fread(z, 1, len, f) == (size_t)len;
+    fclose(f);
+    if (!ok || le32(z) != 0x04034b50) { free(z); return; }
+    int method = z[8] | z[9] << 8;
+    uint32_t csize = le32(z + 18), usize = le32(z + 22);
+    long start = 30 + (z[26] | z[27] << 8) + (z[28] | z[29] << 8);
+    uint8_t *d = start + (long)csize <= len && usize >= 52 ? malloc(usize) : NULL;
+    if (d && method == 0 && csize == usize) memcpy(d, z + start, usize);
+    else if (d && method == 8) {
+        z_stream zs = {0};
+        zs.next_in = z + start; zs.avail_in = csize; zs.next_out = d; zs.avail_out = usize;
+        if (!(inflateInit2(&zs, -15) == Z_OK && inflate(&zs, Z_FINISH) == Z_STREAM_END)) { free(d); d = NULL; }
+        inflateEnd(&zs);
+    } else { free(d); d = NULL; }
+    free(z);
+    if (!d || memcmp(d + 32, "GADP", 4)) { free(d); return; }
+    int n = (int)le32(d + 48);
+    uint32_t words = (usize - 52) / 2;
+    int16_t *v = malloc(words * sizeof *v + 1);
+    uint32_t *at = malloc((n > 0 ? n : 1) * sizeof *at);
+    for (uint32_t i = 0; i < words; i++) v[i] = (int16_t)(d[52 + 2 * i] | d[53 + 2 * i] << 8);
+    free(d);
+    uint32_t w = 0;
+    int i = 0;
+    for (; i < n && w + 11 <= words; i++) {   // where each level starts
+        at[i] = w;
+        int objects = v[w + 10];
+        if (objects < 0 || w + 11 + 5u * objects > words) break;
+        w += 11 + 5 * objects;
+    }
+    pda[k].n = i;
+    pda[k].v = v;
+    pda[k].at = at;
+}
+
+static int pda_count(int k) { pda_open(k); return k >= 0 && k < PDA_PACKS ? pda[k].n : 0; }
+
+// Fills arr with level `level` (1-based) of pack k.
+static void pda_fill(AsVm *vm, AsVal arr, int k, int level) {
+    if (getenv("PDADBG")) printf("  [pda] fill pack %d level %d (%d levels) arr %d\n", k, level, pda_count(k), arr.t == V_OBJ);
+    if (arr.t != V_OBJ || level < 1 || level > pda_count(k)) return;
+    const int16_t *l = pda[k].v + pda[k].at[level - 1];
+    int words = 11 + 5 * l[10];
+    for (int i = 0; i < words; i++) {
+        char key[12];
+        snprintf(key, sizeof key, "%d", i);
+        as_set(vm, arr, as_atom(vm, key), as_num(l[i]));
+    }
+}
+
+static int live_packs(void) {
+    int n = 0;
+    while (n + 1 < PDA_PACKS && pda_count(n + 1) > 0) n++;
+    return n;
+}
+
+// f_PDALoadLevelArray(a_levelData, Level): the built-in levels
+static AsVal f_PDALoadLevelArray(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    pda_fill(vm, ARG(0), 0, (int)as_tonum(vm, ARG(1)));
+    return as_undef();
+}
+
+// f_PDALoadLiveLevelArray(controller, pack id, a_levelData, Level)
+static AsVal f_PDALoadLiveLevelArray(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    pda_fill(vm, ARG(2), (int)as_tonum(vm, ARG(1)), (int)as_tonum(vm, ARG(3)));
+    return as_undef();
+}
+
+// f_PDAGetNumLiveLevelsInPack(controller, pack id)
+static AsVal f_PDAGetNumLiveLevelsInPack(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    return as_num(pda_count((int)as_tonum(vm, ARG(1))));
+}
+
+// f_PDAGetNumLivePacks(controller): the downloadable packs (all of them come with the PC copy)
+static AsVal f_PDAGetNumLivePacks(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_num(live_packs());
+}
+
+// f_PDALiveLevelIndexToPublisherId(controller, index): pack ids are 1-5
+static AsVal f_PDALiveLevelIndexToPublisherId(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    return as_num((int)as_tonum(vm, ARG(1)) + 1);
+}
+
+// f_PDAGetLiveLevelName(controller, index, field): the pack's name in the menu
+static AsVal f_PDAGetLiveLevelName(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    char t[32];
+    snprintf(t, sizeof t, "LEVEL PACK %d", (int)as_tonum(vm, ARG(1)) + 1);
+    if (ARG(2).t == V_OBJ) as_set(vm, ARG(2), as_atom(vm, "text"), as_strv(as_str(vm, t)));
+    return as_undef();
+}
+
+// f_PDASetLevelBoxText(field, Level): the level number on the PDA screen
+static AsVal f_PDASetLevelBoxText(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    char t[32];
+    snprintf(t, sizeof t, "LEVEL %d", (int)as_tonum(vm, ARG(1)));
+    if (ARG(0).t == V_OBJ) as_set(vm, ARG(0), as_atom(vm, "text"), as_strv(as_str(vm, t)));
+    return as_undef();
+}
+
 // ---- the unlock pop-up ---------------------------------------------------------------
 // DisplayUnlock(type) (0 hat, 1 minigame, 2 achievement): the exe kept hud_unlock.pak over
 // the game and passed each unlock to its f_DisplayUnlock(type, data), which queues the
@@ -512,7 +643,6 @@ static int ndct;
 static AsMc *text_clip;
 static int text_tried;
 
-static uint32_t le32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 
 // A .dct: u32 count (top bit set), u32 1, then records of u32 key bytes, u32 value bytes,
 // u32 character count, the key and the value (UTF-8, both NUL terminated).
@@ -681,5 +811,7 @@ void ah_host_init(AsVm *vm) {
     DEF(ShowSignInScreen); DEF(QuitTo); DEF(EndingAttract); DEF(MenuAchievements); DEF(MenuMultiplayer);
     DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(ListenForKeyBinding);
     DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag); DEF(f_SetLoadingLevelText); DEF(DisplayUnlock);
+    DEF(f_PDALoadLevelArray); DEF(f_PDALoadLiveLevelArray); DEF(f_PDAGetNumLiveLevelsInPack); DEF(f_PDAGetNumLivePacks);
+    DEF(f_PDALiveLevelIndexToPublisherId); DEF(f_PDAGetLiveLevelName); DEF(f_PDASetLevelBoxText);
 #undef DEF
 }

@@ -564,6 +564,14 @@ static AsVal mc_bytes(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     AsMc *mc = this_mc(this_);
     return as_num(mc && mc->movie ? (double)mc->movie->len : 0);
 }
+// mc.setMask(m): the renderer has no masks, so the mask clip (a solid shape) is hidden
+// rather than drawn over what it should reveal (pdagames.pak's white PDA screen)
+static AsVal mc_setmask(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_;
+    if (argc > 0 && argv[0].t == V_OBJ && argv[0].o->type == OBJ_MC) ((AsMc *)argv[0].o)->visible = 0;
+    return as_undef();
+}
+
 static AsVal noop(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)vm; (void)this_; (void)argc; (void)argv;
     return as_undef();
@@ -811,7 +819,7 @@ void as_lib_init(AsVm *vm) {
     as_def_fn(vm, mp, "unloadMovie", mc_unloadmovie);
     as_def_fn(vm, mp, "getBytesLoaded", mc_bytes);
     as_def_fn(vm, mp, "getBytesTotal", mc_bytes);
-    as_def_fn(vm, mp, "setMask", noop);
+    as_def_fn(vm, mp, "setMask", mc_setmask);
     as_def_fn(vm, mp, "startDrag", noop);
     as_def_fn(vm, mp, "stopDrag", noop);
     // Color

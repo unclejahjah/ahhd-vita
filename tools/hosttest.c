@@ -544,6 +544,7 @@ static void host_ah_log(const char *line) { printf("  [host] %s\n", line); }
 static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
+    snprintf(ah_data_dir, sizeof ah_data_dir, "%s/", argv[2]);
     int frames = argc > 5 ? atoi(argv[5]) : 60, every = argc > 6 ? atoi(argv[6]) : 30;
     Movie *start = host_loader(NULL, argv[3]);
     if (!start) return 1;
