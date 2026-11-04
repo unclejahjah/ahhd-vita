@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<livearea style="ad0" format-ver="01.00" content-rev="2">
+<livearea style="ad0" format-ver="01.00" content-rev="3">
   <livearea-background>
     <image>bg.png</image>
   </livearea-background>
@@ -7,7 +7,7 @@
   <frame id="frame1" multi="o" autoflip="1">
     <liveitem>
       <target>psla:eboot</target>
-      <image y="87" x="20" width="420" height="143">startup.png</image>
+      <image y="39" x="10" width="420" height="143">startup.png</image>
     </liveitem>
   </frame>
 
