@@ -6,26 +6,61 @@ A native PS Vita port of Alien Hominid HD. It runs the game's own Flash content 
 
 ## Install
 
-1. Get `ahhd_vita.vpk`: from this repository's releases, from the "Vita build" workflow's `ahhd-vita-vpk` artifact on GitHub Actions, or by building it yourself (see below).
-2. Install the VPK with VitaShell.
-3. Copy these folders from your install's `data` folder to `ux0:data/AlienHominidHD/` on the Vita, so that `ux0:data/AlienHominidHD/game/alien.pak` exists:
+You need a PS Vita with HENkaku or Ensō and VitaShell, plus your own copy of Alien Hominid HD on a PC. The Steam release is the one this was tested with.
 
-| Folder | Needed for | Size |
-| --- | --- | --- |
-| `game`, `levels` | The game itself | About 25 MB |
-| `fonts`, `loc` | All text | Small |
-| `sounds` | Sound effects | 5 MB |
-| `music` | Music | 134 MB |
+### 1. Install the app
 
-The game runs silent without `sounds` and `music`.
+1. Get `ahhd_vita.vpk`. It comes from this repository's releases, from the "Vita build" workflow's `ahhd-vita-vpk` artifact on GitHub Actions, or from building it yourself (see [Building](#building)).
+2. Copy the VPK to the Vita, for example to `ux0:downloads/`.
+3. In VitaShell, open the VPK and press Cross to install it. The "Alien Hominid" bubble appears on the home screen.
+
+### 2. Find the game's data folder on your PC
+
+In Steam, right-click Alien Hominid HD and choose Manage, then Browse local files. Open the `data` folder. You'll use these folders from it:
+
+| Folder | Holds | Needed for | Size |
+| --- | --- | --- | --- |
+| `game` | `.pak` files (`alien.pak`, `menu.pak`, ...) | The game itself | About 25 MB with `levels` |
+| `levels` | `.pak` files (`level11.pak`, ...) | The levels | |
+| `fonts` | `.fnt` and `.png` files | All text | Small |
+| `loc` | `.dct` files | Menu text | Small |
+| `sounds` | 224 `.adpcm` files | Sound effects | About 5 MB |
+| `music` | 36 `.adpcm` files | Music | About 134 MB |
+
+The other folders, `baf` and `shaders`, aren't used.
+
+### 3. Copy the data to the Vita
+
+1. Connect the Vita to the PC. You can use VitaShell's FTP server (press Select in VitaShell, then connect an FTP client to the address it shows), or its USB mode.
+2. On the Vita, create the folder `ux0:data/AlienHominidHD/`.
+3. Copy the six folders from the table into it, as they are. Don't convert, rename or unpack any files.
+
+When you're done, it should look like this:
+
+```
+ux0:data/AlienHominidHD/
+├── game/alien.pak       (and the other .pak files)
+├── levels/level11.pak   (and the other .pak files)
+├── fonts/synjunicode_20.fnt
+├── loc/en.dct
+├── sounds/*.adpcm
+└── music/*.adpcm
+```
+
+Check that each folder holds its files directly. A common mistake is ending up with `ux0:data/AlienHominidHD/data/game/` or `sounds/sounds/`.
 
 ### Sound and music
 
-1. Find your install's `data` folder. In Steam, right-click Alien Hominid HD, pick Manage, then Browse local files, and open `data`.
-2. Copy the `sounds` and `music` folders as they are, without converting or renaming anything, to `ux0:data/AlienHominidHD/`. VitaShell's FTP server or a USB connection both work.
-3. Check that `ux0:data/AlienHominidHD/sounds/` and `ux0:data/AlienHominidHD/music/` hold the game's `.adpcm` files directly, not inside another folder.
+Sound effects come from `sounds`, and music from `music`. Both are the game's own `.adpcm` files, read as they are, so you only need to copy them. Without either folder, the game still runs, just without that kind of sound. To save space, you can copy `sounds` and leave out `music`, which is the 134 MB folder.
 
-You can copy only `sounds` for effects without music, which saves 134 MB.
+If there's no sound:
+- Check that the files are in `ux0:data/AlienHominidHD/sounds/` and `ux0:data/AlienHominidHD/music/`, not in a subfolder.
+- Check the Music and SFX volumes in the game's options.
+- Check the Vita's own volume.
+
+### 4. Start the game
+
+Tap the bubble. If a data file is missing, the app shows which one and where it expected it, instead of starting.
 
 ## Controls
 
