@@ -728,21 +728,71 @@ static AsVal QuitTo(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 typedef struct {
     const char *file;          // e.g. "pause.pak"
     uint32_t at;               // offset in the SWF
-    uint8_t expect[8];         // what must be there
-    uint8_t put[5];            // what goes there
+    uint8_t n;                 // bytes checked and written (0: 8 checked, 5 written)
+    uint8_t expect[20];        // what must be there
+    uint8_t put[20];           // what goes there
     const char *why;
 } Patch;
+
+// "Not; If" -> "Pop; Jump": the If's branch is always taken
+#define ALWAYS_JUMP(lo, hi) {0x12, 0x9d, 0x02, 0x00, lo, hi}, {0x17, 0x99, 0x02, 0x00, lo, hi}
 
 static const Patch patches[] = {
     // f_BuildPlayerOptionsMenu: jump over the VIBRATION item (text 31) to the next one; the
     // Vita has no rumble
-    {"pause.pak", 0x45e78, {0x96, 0x15, 0x00, 0x04, 0x05, 0x04, 0x02, 0x03}, {0x99, 0x02, 0x00, 0xcb, 0x00},
+    {"pause.pak", 0x45e78, 0, {0x96, 0x15, 0x00, 0x04, 0x05, 0x04, 0x02, 0x03}, {0x99, 0x02, 0x00, 0xcb, 0x00},
      "no vibration option"},
     // f_BuildMainOptionsMenu: jump over the CREDITS item (text 25) to the end of the menu; the
     // credits text lived in the exe, so the roll would be empty
-    {"pause.pak", 0x44b38, {0x96, 0x14, 0x00, 0x04, 0x04, 0x04, 0x03, 0x03}, {0x99, 0x02, 0x00, 0x3a, 0x00},
+    {"pause.pak", 0x44b38, 0, {0x96, 0x14, 0x00, 0x04, 0x04, 0x04, 0x03, 0x03}, {0x99, 0x02, 0x00, 0x3a, 0x00},
      "no credits option"},
+
+    // ---- Leaderboards: one global board (no friends filter, no gamer card), and a
+    // LIFETIME timeframe next to MONTHLY and WEEKLY
+    // f_SetIconsLeaderboard: jump over the Triangle "SHOW GAMER CARD" button
+    {"pause.pak", 0x3debf, 0, {0x96, 0x04, 0x00, 0x04, 0x02, 0x08, 0x46, 0x4e}, {0x99, 0x02, 0x00, 0x7a, 0x00},
+     "no gamer card button"},
+    // the board's input: Triangle (gamer card) and Square (filter) do nothing
+    {"pause.pak", 0x4d631, 6, ALWAYS_JUMP(0x32, 0x00), "no gamer card"},
+    {"pause.pak", 0x4d678, 6, ALWAYS_JUMP(0x56, 0x01), "no friends filter"},
+    // the board's top line: skip the Square "FILTER: ..." label
+    {"pause.pak", 0x4b89c, 0, {0x96, 0x15, 0x00, 0x07, 0xeb, 0x03, 0x00, 0x00}, {0x99, 0x02, 0x00, 0x2a, 0x01},
+     "no filter label"},
+    // f_LEADERBOARDSELECT_*: friendsfilter starts at 0 (everyone) instead of 1 (friends)
+#define ALL_SCORES(at) {"pause.pak", at, 11, {0xa3, 0x08, 0x00, 0x09, 0x86, 0x01, 0x07, 0x01, 0x00, 0x00, 0x00}, \
+                        {0xa3, 0x08, 0x00, 0x09, 0x86, 0x01, 0x07, 0x00, 0x00, 0x00, 0x00}, "global board"}
+    ALL_SCORES(0x3fa51), ALL_SCORES(0x3fc79), ALL_SCORES(0x3fecb), ALL_SCORES(0x40103), ALL_SCORES(0x403a3),
+    // f_BuildAHLeaderboardSelectMenu, the TIMEFRAME item: "index = 0" becomes ahTF(item), which
+    // gives it LIFETIME, MONTHLY and WEEKLY (texts 151-153)
+    {"pause.pak", 0x46e15, 18,
+     {0x96, 0x0e, 0x00, 0x04, 0x02, 0x09, 0x8f, 0x01, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0x4f},
+     {0x96, 0x0d, 0x00, 0x04, 0x02, 0x07, 0x01, 0x00, 0x00, 0x00, 0x00, 'a', 'h', 'T', 'F', 0x00, 0x3d, 0x17},
+     "lifetime timeframe"},
+    // f_UPDATELBTIMEFRAME_LM: three choices (index up to 2), not two
+    {"pause.pak", 0x52ec0, 0, {0x96, 0x05, 0x00, 0x07, 0x01, 0x00, 0x00, 0x00}, {0x96, 0x05, 0x00, 0x07, 0x02},
+     "three timeframes"},
+    // the end-of-level scoreboard asks IsPlayerOnline before it sends the score (and shows the
+    // sign-in notice when the answer is no); its frames ask ahScoresOnline instead, which is
+    // yes while the leaderboard is online (IsPlayerOnline stays no for the match menus)
+#define SCORES_ONLINE(at) {"scorebrd.pak", at, 15, "IsPlayerOnline", "ahScoresOnline", "scores sent online"}
+    SCORES_ONLINE(0x21a6b), SCORES_ONLINE(0x225db), SCORES_ONLINE(0x22a48),
+    // f_LEADERBOARDSELECT_AH: expiretime = the choice (0 lifetime, 1 monthly, 2 weekly, as the
+    // board's own label reads it: text 151 + expiretime), not the choice + 1
+    {"pause.pak", 0x3fba1, 0, {0x96, 0x05, 0x00, 0x07, 0x01, 0x00, 0x00, 0x00}, {0x96, 0x05, 0x00, 0x07, 0x00},
+     "timeframe as chosen"},
 };
+
+// ahTF(item): the leaderboard TIMEFRAME choices (see the patch above)
+static AsVal ahTF(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    AsVal item = ARG(0);
+    if (item.t != V_OBJ) return as_undef();
+    as_set(vm, item, as_atom(vm, "s0"), as_num(151));   // LIFETIME
+    as_set(vm, item, as_atom(vm, "s1"), as_num(152));   // MONTHLY
+    as_set(vm, item, as_atom(vm, "s2"), as_num(153));   // WEEKLY
+    as_set(vm, item, as_atom(vm, "index"), as_num(0));
+    return as_undef();
+}
 
 void ah_patch_movie(const char *file, Movie *m) {
     cc_buttons_ah_glyphs(m);   // PlayStation buttons like the Castle Crashers build
@@ -750,8 +800,9 @@ void ah_patch_movie(const char *file, Movie *m) {
     base = base ? base + 1 : file;
     for (size_t i = 0; i < sizeof patches / sizeof *patches; i++) {
         const Patch *p = &patches[i];
-        if (strcasecmp(base, p->file) || p->at + 8 > m->len || memcmp(m->data + p->at, p->expect, 8)) continue;
-        memcpy(m->data + p->at, p->put, 5);
+        int n = p->n ? p->n : 8;
+        if (strcasecmp(base, p->file) || p->at + n > m->len || memcmp(m->data + p->at, p->expect, n)) continue;
+        memcpy(m->data + p->at, p->put, p->n ? p->n : 5);
         if (ah_log) {
             char line[96];
             snprintf(line, sizeof line, "patched %s: %s", p->file, p->why);
@@ -907,7 +958,7 @@ static AsVal SetTextToGamerTag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 //   UpdateLeaderboard(port, "ahhd", difficulty, score)   after a level, from the scoreboard
 //   LoginToOnlineAccount(port)                           opening Leaderboards
 //   MenuLeaderboards(port, filter, firstrank, command, ...), filter 0 all / 1 friends / 2 me:
-//     0 (board, ranked, difficulty, timeframe 0 week/1 month/2 all) start   100 status: 0 busy, >0 ready, <0 error
+//     0 (board, ranked, difficulty, timeframe 0 lifetime/1 month/2 week) start   100 status: 0 busy, >0 ready, <0 error
 //     200 rows   201 the player's row (-1: none)   300 (row, rank, name, score, score2 fields)
 //     310 (count, offset) scroll   500 (row) select   999 release
 
@@ -949,6 +1000,11 @@ static AsVal IsPlayerOnline(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     return as_bool(lb && lb_on());
 }
 
+static AsVal ahScoresOnline(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_bool(lb_on());
+}
+
 static const AhLbRow *lb_rows;
 static int lb_nrows, lb_me = -1, lb_state;   // lb_state: 0 none, 1 asked, 2 ready, -1 failed
 
@@ -966,7 +1022,8 @@ static AsVal MenuLeaderboards(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
         const char *board = as_tostr(vm, ARG(4))->s;
         lb_rows = NULL, lb_nrows = 0, lb_me = -1;
         if (strcmp(board, "ahhd")) { lb_state = 2; return as_num(1); }   // other boards: empty
-        ah_lb_request(board, (int)as_tonum(vm, ARG(6)), (int)as_tonum(vm, ARG(7)), filter == 2);
+        int tf = (int)as_tonum(vm, ARG(7));   // the game's: 0 lifetime, 1 monthly, 2 weekly
+        ah_lb_request(board, (int)as_tonum(vm, ARG(6)), tf == 1 ? 1 : tf == 2 ? 0 : 2, filter == 2);
         lb_state = 1;
         return as_num(1);
     }
@@ -1045,7 +1102,7 @@ void ah_host_init(AsVm *vm) {
     DEF(ClearUserToControllerBindings); DEF(StartControllerPairing); DEF(SetBackgroundAlpha);
     DEF(GetPrimaryUserPort); DEF(CreateLocalGame); DEF(CancelGame); DEF(StopControllerPairing);
     DEF(ShowSignInScreen); DEF(QuitTo); DEF(EndingAttract); DEF(MenuAchievements); DEF(MenuMultiplayer);
-    DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(IsPlayerOnline); DEF(UpdateLeaderboard); DEF(MenuLeaderboards); DEF(ListenForKeyBinding);
+    DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(IsPlayerOnline); DEF(ahScoresOnline); DEF(UpdateLeaderboard); DEF(MenuLeaderboards); DEF(ahTF); DEF(ListenForKeyBinding);
     DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag); DEF(f_SetLoadingLevelText); DEF(DisplayUnlock);
     DEF(f_PDALoadLevelArray); DEF(f_PDALoadLiveLevelArray); DEF(f_PDAGetNumLiveLevelsInPack); DEF(f_PDAGetNumLivePacks);
     DEF(f_PDALiveLevelIndexToPublisherId); DEF(f_PDAGetLiveLevelName); DEF(f_PDASetLevelBoxText); DEF(f_SetCreditText);
