@@ -43,6 +43,10 @@ extern int (*ah_lb_online)(void);                                      // option
 extern void (*ah_lb_submit)(const char *board, int difficulty, double score);
 extern void (*ah_lb_request)(const char *board, int difficulty, int timeframe, int around_me);   // timeframe 0 week, 1 month, 2 all
 extern int (*ah_lb_poll)(const AhLbRow **rows, int *nrows, int *me);   // 0 busy, 1 done, -1 failed
+// optional: start reading these files (names without .pak) in the background, and how many
+// are still being read; the loading screen waits for them, playing, before the level loads
+extern void (*ah_prefetch)(const char *const *files, int n);
+extern int (*ah_prefetch_pending)(void);
 extern void (*ah_log)(const char *line);   // optional: where logged calls go
 
 #endif

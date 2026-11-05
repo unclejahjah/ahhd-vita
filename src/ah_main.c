@@ -9,6 +9,8 @@
 // SELECT+UP shows the stats overlay, SELECT+START quits.
 #include <psp2/ctrl.h>
 #include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/power.h>
@@ -316,59 +318,184 @@ static struct { char name[64]; Movie *m; GpuBlock gpu; } g_movies[MAX_MOVIES];
 static int g_nmovies;
 static char g_last_error[256];
 
-static Movie *vita_loader(AsVm *vm, const char *url) {
-    (void)vm;
+// "../alien/alien.swf", "HUD" -> "alien.pak", "hud.pak"
+static void pak_name(const char *url, char *name, size_t size) {
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
-    char name[64];
-    snprintf(name, sizeof name, "%s", base);
+    snprintf(name, size, "%s", base);
     char *dot = strrchr(name, '.');
     if (dot) *dot = 0;
     for (char *p = name; *p; p++) *p = (char)tolower((unsigned char)*p);
-    strncat(name, ".pak", sizeof name - strlen(name) - 1);
-    for (int i = 0; i < g_nmovies; i++)
-        if (!strcmp(g_movies[i].name, name)) return g_movies[i].m;
-    if (g_nmovies == MAX_MOVIES) return NULL;
+    strncat(name, ".pak", size - strlen(name) - 1);
+}
+
+static int pak_path(const char *name, char *path, size_t size) {
     static const char *dirs[] = {"game", "levels"};
     for (int i = 0; i < 2; i++) {
-        char path[256], err[256];
-        snprintf(path, sizeof path, DATA_DIR "%s/%s", dirs[i], name);
-        SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
-        if (fd < 0) continue;
-        sceIoClose(fd);
-        if (g_show_loads) {
-            char msg[128];
-            snprintf(msg, sizeof msg, "Loading %s...", name);
-            show_message(msg, NULL);
-        }
-        Movie *m = swf_load(path, err, sizeof err);
-        if (!m) {
-            snprintf(g_last_error, sizeof g_last_error, "%s: %s", name, err);
-            return NULL;
-        }
-        ah_patch_movie(path, m);
-        for (int c = 0; c < 65536; c++) {   // bitmaps become textures
-            if (m->chars[c].type != CHAR_BITMAP) continue;
-            Bitmap *bm = m->chars[c].ptr;
-            vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
-            if (!tex) continue;
-            uint8_t *dst = vita2d_texture_get_datap(tex);
-            unsigned stride = vita2d_texture_get_stride(tex);
-            for (int y = 0; y < bm->h; y++) memcpy(dst + y * stride, bm->rgba + (size_t)y * bm->w * 4, (size_t)bm->w * 4);
-            bm->tex = tex;
-            free(bm->rgba);
-            bm->rgba = NULL;
-        }
-        GpuBlock *blk = &g_movies[g_nmovies].gpu;
-        blk->uid = -1;
-        render_tessellate_all(m);
-        if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
-        snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", name);
-        g_movies[g_nmovies++].m = m;
-        return m;
+        snprintf(path, size, DATA_DIR "%s/%s", dirs[i], name);
+        SceIoStat st;
+        if (sceIoGetstat(path, &st) >= 0) return 1;
     }
-    snprintf(g_last_error, sizeof g_last_error, "missing %s", name);
+    return 0;
+}
+
+static Movie *cached_movie(const char *name) {
+    for (int i = 0; i < g_nmovies; i++)
+        if (!strcmp(g_movies[i].name, name)) return g_movies[i].m;
     return NULL;
+}
+
+// The part of loading a file that needs no GPU: read, parse, patch, tessellate. The
+// background readers run it too, several files at once.
+static SceUID g_patch_lock = -1;   // ah_patch_movie isn't safe to run twice at once
+static Movie *read_movie(const char *path, char *err, size_t errlen) {
+    Movie *m = swf_load(path, err, (int)errlen);
+    if (!m) return NULL;
+    if (g_patch_lock >= 0) sceKernelLockMutex(g_patch_lock, 1, NULL);
+    ah_patch_movie(path, m);
+    if (g_patch_lock >= 0) sceKernelUnlockMutex(g_patch_lock, 1);
+    render_tessellate_all(m);
+    return m;
+}
+
+// The part that does: bitmaps become textures, the meshes go to GPU memory.
+static Movie *install_movie(const char *name, Movie *m) {
+    if (g_nmovies == MAX_MOVIES) {
+        swf_free(m);
+        return NULL;
+    }
+    for (int c = 0; c < 65536; c++) {
+        if (m->chars[c].type != CHAR_BITMAP) continue;
+        Bitmap *bm = m->chars[c].ptr;
+        vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+        if (!tex) continue;
+        uint8_t *dst = vita2d_texture_get_datap(tex);
+        unsigned stride = vita2d_texture_get_stride(tex);
+        for (int y = 0; y < bm->h; y++) memcpy(dst + y * stride, bm->rgba + (size_t)y * bm->w * 4, (size_t)bm->w * 4);
+        bm->tex = tex;
+        free(bm->rgba);
+        bm->rgba = NULL;
+    }
+    GpuBlock *blk = &g_movies[g_nmovies].gpu;
+    blk->uid = -1;
+    if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
+    snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", name);
+    g_movies[g_nmovies++].m = m;
+    return m;
+}
+
+// ---- background reads, while the loading screen plays -----------------------------------
+// Parsing and tessellating a level's files took 10 to 15 seconds on one core with the
+// screen frozen. Readers on all three cores do it now while the loading screen animates;
+// the main thread only installs what they finish.
+
+#define MAX_JOBS 16
+#define NREADERS 3
+enum { JOB_FREE, JOB_QUEUED, JOB_READING, JOB_READ };
+static struct { char name[64], path[256]; Movie *m; volatile int state; } g_jobs[MAX_JOBS];
+static SceUID g_jobs_lock = -1, g_jobs_sema = -1;
+
+static int reader_thread(SceSize args, void *argp) {
+    (void)args, (void)argp;
+    for (;;) {
+        sceKernelWaitSema(g_jobs_sema, 1, NULL);
+        sceKernelLockMutex(g_jobs_lock, 1, NULL);
+        int j = -1;
+        for (int i = 0; i < MAX_JOBS && j < 0; i++)
+            if (g_jobs[i].state == JOB_QUEUED) j = i;
+        if (j >= 0) g_jobs[j].state = JOB_READING;
+        sceKernelUnlockMutex(g_jobs_lock, 1);
+        if (j < 0) continue;
+        char err[256];
+        g_jobs[j].m = read_movie(g_jobs[j].path, err, sizeof err);   // NULL: the loader reports it later
+        __atomic_store_n(&g_jobs[j].state, JOB_READ, __ATOMIC_RELEASE);
+    }
+    return 0;
+}
+
+static void readers_start(void) {
+    g_patch_lock = sceKernelCreateMutex("ah_patch", 0, 0, NULL);
+    g_jobs_lock = sceKernelCreateMutex("ah_jobs", 0, 0, NULL);
+    g_jobs_sema = sceKernelCreateSema("ah_jobs", 0, 0, MAX_JOBS, NULL);
+    static const int cores[NREADERS] = {SCE_KERNEL_CPU_MASK_USER_1, SCE_KERNEL_CPU_MASK_USER_2, SCE_KERNEL_CPU_MASK_USER_0};
+    for (int i = 0; i < NREADERS; i++) {
+        // below the main thread, so the loading screen keeps its frame rate
+        SceUID t = sceKernelCreateThread("ah_reader", reader_thread, 0x10000100 + 20, 0x40000, 0, cores[i], NULL);
+        if (t >= 0) sceKernelStartThread(t, 0, NULL);
+    }
+}
+
+// the main thread takes job j's movie into the cache
+static Movie *finish_job(int j) {
+    Movie *m = g_jobs[j].m ? install_movie(g_jobs[j].name, g_jobs[j].m) : NULL;
+    g_jobs[j].m = NULL;
+    g_jobs[j].state = JOB_FREE;
+    return m;
+}
+
+static void vita_prefetch(const char *const *files, int n) {
+    if (g_jobs_sema < 0) return;
+    for (int f = 0; f < n; f++) {
+        char name[64], path[256];
+        pak_name(files[f], name, sizeof name);
+        if (cached_movie(name)) continue;
+        int j = -1, dup = 0;
+        for (int i = 0; i < MAX_JOBS; i++) {
+            if (g_jobs[i].state != JOB_FREE && !strcmp(g_jobs[i].name, name)) dup = 1;
+            if (g_jobs[i].state == JOB_FREE && j < 0) j = i;
+        }
+        if (dup || j < 0 || !pak_path(name, path, sizeof path)) continue;
+        snprintf(g_jobs[j].name, sizeof g_jobs[j].name, "%s", name);
+        snprintf(g_jobs[j].path, sizeof g_jobs[j].path, "%s", path);
+        g_jobs[j].m = NULL;
+        sceKernelLockMutex(g_jobs_lock, 1, NULL);
+        g_jobs[j].state = JOB_QUEUED;
+        sceKernelUnlockMutex(g_jobs_lock, 1);
+        sceKernelSignalSema(g_jobs_sema, 1);
+    }
+}
+
+// installs the reads that are done (one per call, to spread the uploads over frames) and
+// says how many are still going
+static int vita_prefetch_pending(void) {
+    int pending = 0, installed = 0;
+    for (int i = 0; i < MAX_JOBS; i++) {
+        int st = __atomic_load_n(&g_jobs[i].state, __ATOMIC_ACQUIRE);
+        if (st == JOB_READ && !installed) { finish_job(i); installed = 1; continue; }
+        if (st != JOB_FREE) pending++;
+    }
+    return pending;
+}
+
+static Movie *vita_loader(AsVm *vm, const char *url) {
+    (void)vm;
+    char name[64];
+    pak_name(url, name, sizeof name);
+    Movie *m = cached_movie(name);
+    if (m) return m;
+    for (int i = 0; i < MAX_JOBS; i++) {   // being read in the background: wait for it
+        if (g_jobs[i].state == JOB_FREE || strcmp(g_jobs[i].name, name)) continue;
+        while (__atomic_load_n(&g_jobs[i].state, __ATOMIC_ACQUIRE) != JOB_READ) sceKernelDelayThread(1000);
+        if ((m = finish_job(i))) return m;
+        break;   // it failed there: load it here, to report why
+    }
+    if (g_nmovies == MAX_MOVIES) return NULL;
+    char path[256], err[256];
+    if (!pak_path(name, path, sizeof path)) {
+        snprintf(g_last_error, sizeof g_last_error, "missing %s", name);
+        return NULL;
+    }
+    if (g_show_loads) {
+        char msg[128];
+        snprintf(msg, sizeof msg, "Loading %s...", name);
+        show_message(msg, NULL);
+    }
+    m = read_movie(path, err, sizeof err);
+    if (!m) {
+        snprintf(g_last_error, sizeof g_last_error, "%s: %s", name, err);
+        return NULL;
+    }
+    return install_movie(name, m);
 }
 
 // Frees the files no clip or script function belongs to any more (levels left behind).
@@ -511,6 +638,9 @@ int main(void) {
     ah_sfx_stop_all = stop_all_sfx;
     ah_sfx_hold = audio_sfx_hold;
     ah_online_init(DATA_DIR);   // the online leaderboard, when this build has a server
+    readers_start();
+    ah_prefetch = vita_prefetch;
+    ah_prefetch_pending = vita_prefetch_pending;
     ah_save_load(DATA_DIR "save.dat");   // unlocks, Load Level, options and volumes
     as_render_init(vm);
     if (!ah_start(vm, "legal.pak")) {
@@ -574,7 +704,8 @@ int main(void) {
 
         const Movie *root = vm->root->movie;
         if (ticked) {
-            if (vm->tick - last_free >= 90 && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
+            // not under the loading screen: the files read for the level aren't in use yet
+            if (!ah_loading && vm->tick - last_free >= 90 && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
                 last_free = vm->tick;
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
             }
