@@ -19,6 +19,14 @@ A native PS Vita port of Alien Hominid HD. It runs the game's own Flash content 
 
 The game runs silent without `sounds` and `music`.
 
+### Sound and music
+
+1. Find your install's `data` folder. In Steam, right-click Alien Hominid HD, pick Manage, then Browse local files, and open `data`.
+2. Copy the `sounds` and `music` folders as they are, without converting or renaming anything, to `ux0:data/AlienHominidHD/`. VitaShell's FTP server or a USB connection both work.
+3. Check that `ux0:data/AlienHominidHD/sounds/` and `ux0:data/AlienHominidHD/music/` hold the game's `.adpcm` files directly, not inside another folder.
+
+You can copy only `sounds` for effects without music, which saves 134 MB. Changes take effect the next time the app starts.
+
 ## Controls
 
 | Button | Action |
