@@ -181,7 +181,8 @@ typedef struct {
     ActionBlock *init;
 } Movie;
 
-Movie *swf_load(const char *path, char *err, int errlen);
+Movie *swf_load(const char *path, char *err, int errlen);   // .swf, or an Alien Hominid HD .pak / .BREC
+int brec_unwrap(uint8_t **data, long *len, char *err, int errlen);
 void swf_free(Movie *m);
 int sprite_frame_at(const Sprite *s, int tick);
 int sprite_find_label(const Sprite *s, const char *name);

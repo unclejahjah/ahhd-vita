@@ -151,6 +151,10 @@ static void decompose(AsMc *mc) {
 static void recompose(AsMc *mc) {
     float r = mc->rotation * 3.14159265f / 180.0f, cs = cosf(r), sn = sinf(r);
     float xs = mc->xscale / 100, ys = mc->yscale / 100;
+    // Flash rebuilds the matrix from itself on each scale write, so _xscale = -100 then
+    // _yscale = -100 ends up as a single x mirror, not a 180-degree turn. The UFO levels
+    // (1-5, 2-6) rely on this for the booster and cannon.
+    if (xs < 0 && ys < 0) ys = -ys;
     mc->m.a = xs * cs;
     mc->m.b = xs * sn;
     mc->m.c = -ys * sn;
@@ -612,7 +616,12 @@ AsVal as_mc_get_prop(AsVm *vm, AsMc *mc, int i) {
 
 void as_mc_set_prop(AsVm *vm, AsMc *mc, int i, AsVal v) {
     double n = as_tonum(vm, v);
-    if (isnan(n) && i != 7 && i != 13) return;
+    if (AS_ENV("AS_WATCHPROP") && mc->name && !strcasecmp(mc->name->s, AS_ENV("AS_WATCHPROP")))
+        as_warn(vm, "tick %u: %s prop %d = %s (type %d) in %s", vm->tick, mc->name->s, i, as_tostr(vm, v)->s, v.t,
+                vm->cur_fn && vm->cur_fn->fname ? vm->cur_fn->fname->s : "timeline");
+    // undefined, like NaN, leaves a number property as it is (f_AlienNotDriving sets the cars'
+    // body._y from a body_y not yet saved; as 0 the body sat on the ground, above its wheels)
+    if ((isnan(n) || v.t == V_UNDEF) && i != 7 && i != 13) return;
     switch (i) {
     case 0: mc->m.tx = (float)(n * 20); mc->scripted = 1; break;
     case 1: mc->m.ty = (float)(n * 20); mc->scripted = 1; break;

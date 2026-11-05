@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 
 static uint8_t *read_file(const char *path, size_t *len) {
     FILE *f = fopen(path, "rb");
@@ -22,6 +23,52 @@ static unsigned ru16(const uint8_t *p) { return p[0] | p[1] << 8; }
 static uint32_t ru32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 
 typedef struct { unsigned x, y, w, h; } Rect;
+
+static uint32_t rb32(const uint8_t *p) { return (uint32_t)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+
+// An 8-bit RGBA, non-interlaced PNG (the Steam copy's font pages) as R,G,B,A bytes.
+static uint8_t *png_rgba(const uint8_t *d, size_t len, unsigned *w, unsigned *h) {
+    if (len < 33 || memcmp(d, "\x89PNG\r\n\x1a\n", 8)) return NULL;
+    *w = rb32(d + 16);
+    *h = rb32(d + 20);
+    if (d[24] != 8 || d[25] != 6 || d[28] != 0 || !*w || !*h || *w > 8192 || *h > 8192) return NULL;
+    size_t zlen = 0;
+    for (size_t p = 8; p + 12 <= len; p += 12 + rb32(d + p))
+        if (!memcmp(d + p + 4, "IDAT", 4)) zlen += rb32(d + p);
+    uint8_t *z = malloc(zlen ? zlen : 1);
+    size_t zp = 0;
+    for (size_t p = 8; p + 12 <= len && z; p += 12 + rb32(d + p)) {
+        uint32_t n = rb32(d + p);
+        if (p + 12 + n > len) break;
+        if (!memcmp(d + p + 4, "IDAT", 4)) { memcpy(z + zp, d + p + 8, n); zp += n; }
+    }
+    size_t stride = (size_t)*w * 4;
+    uLongf rawlen = (stride + 1) * *h;
+    uint8_t *raw = malloc(rawlen), *out = malloc(stride * *h);
+    if (!z || !raw || !out || uncompress(raw, &rawlen, z, zp) != Z_OK || rawlen != (stride + 1) * *h) {
+        free(z); free(raw); free(out);
+        return NULL;
+    }
+    free(z);
+    for (unsigned y = 0; y < *h; y++) {   // undo the row filters
+        const uint8_t *in = raw + y * (stride + 1) + 1;
+        uint8_t *row = out + y * stride, *up = y ? row - stride : NULL;
+        int f = in[-1];
+        for (size_t i = 0; i < stride; i++) {
+            int a = i >= 4 ? row[i - 4] : 0, b = up ? up[i] : 0, c = up && i >= 4 ? up[i - 4] : 0, v = in[i];
+            if (f == 1) v += a;
+            else if (f == 2) v += b;
+            else if (f == 3) v += (a + b) / 2;
+            else if (f == 4) {
+                int p = a + b - c, pa = abs(p - a), pb = abs(p - b), pc = abs(p - c);
+                v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+            }
+            row[i] = (uint8_t)v;
+        }
+    }
+    free(raw);
+    return out;
+}
 
 HostFont *hostfont_load(const char *fnt_path, const char *dds_path, char *err, int errlen) {
     size_t flen, dlen;
@@ -62,24 +109,36 @@ HostFont *hostfont_load(const char *fnt_path, const char *dds_path, char *err, i
     }
     free(fnt);
 
-    uint8_t *dds = read_file(dds_path, &dlen);
-    if (!dds || dlen < 128 || memcmp(dds, "DDS ", 4) || ru32(dds + 88) != 32) {
-        snprintf(err, errlen, "can't read the font page %s (32-bit DDS expected)", dds_path);
+    // the font page: a 32-bit DDS (Castle Crashers) or an RGBA PNG (Alien Hominid HD)
+    uint8_t *dds = read_file(dds_path, &dlen), *png = NULL;
+    unsigned dw = 0, dh = 0;
+    uint32_t mask[4] = {0xFF, 0xFF00, 0xFF0000, 0xFF000000};
+    const uint8_t *px = NULL;
+    if (dds && dlen >= 8 && !memcmp(dds, "\x89PNG", 4)) {
+        png = png_rgba(dds, dlen, &dw, &dh);
+        px = png;
+    } else if (dds && dlen >= 128 && !memcmp(dds, "DDS ", 4) && ru32(dds + 88) == 32) {
+        dh = ru32(dds + 12);
+        dw = ru32(dds + 16);
+        // channel masks tell where R, G, B, A sit in each 32-bit pixel
+        for (int k = 0; k < 4; k++) mask[k] = ru32(dds + 92 + 4 * k);
+        px = dds + 128;
+        if ((size_t)dw * dh * 4 + 128 > dlen) px = NULL;
+    }
+    if (!px) {
+        snprintf(err, errlen, "can't read the font page %s (32-bit DDS or RGBA PNG expected)", dds_path);
         free(dds);
         free(hf);
         return NULL;
     }
-    unsigned dh = ru32(dds + 12), dw = ru32(dds + 16);
-    // channel masks tell where R, G, B, A sit in each 32-bit pixel
-    uint32_t mask[4] = {ru32(dds + 92), ru32(dds + 96), ru32(dds + 100), ru32(dds + 104)};
     int shift[4];
     for (int k = 0; k < 4; k++) {
         shift[k] = 0;
         while (mask[k] && !(mask[k] >> shift[k] & 1)) shift[k]++;
     }
-    const uint8_t *px = dds + 128;
-    if ((size_t)dw * dh * 4 + 128 > dlen) { snprintf(err, errlen, "font page too short"); free(dds); free(hf); return NULL; }
 
+    int sdf_gain = 4;
+    if (getenv("HOSTFONT_SDF_GAIN")) sdf_gain = atoi(getenv("HOSTFONT_SDF_GAIN"));   // for tuning on the desktop
     // shelf-pack the glyphs into a 512-wide atlas with a pixel of space around each
     const unsigned AW = 512;
     unsigned x = 1, y = 1, row_h = 0;
@@ -106,6 +165,13 @@ HostFont *hostfont_load(const char *fnt_path, const char *dds_path, char *err, i
                 uint32_t v = ru32(px + ((size_t)(s.y + j) * dw + s.x + i) * 4);
                 uint8_t *o = a->rgba + ((size_t)(d.y + j) * AW + d.x + i) * 4;
                 for (int k = 0; k < 4; k++) o[k] = mask[k] ? (v & mask[k]) >> shift[k] : 255;
+                // Alien Hominid HD's page is a distance field (alpha 0.5 = the glyph's edge,
+                // fading out over ~8 pixels); the exe cut it at the edge. Without that the
+                // letters come out as soft glows, so sharpen the ramp around the edge.
+                if (png) {
+                    int al = (o[3] - 128) * sdf_gain + 128;
+                    o[3] = al < 0 ? 0 : al > 255 ? 255 : al;
+                }
             }
         // the glyph quad, in font pixels from the top-left of the line
         float x0 = g->xoff, y0 = g->yoff, x1 = x0 + s.w, y1 = y0 + s.h;
@@ -124,6 +190,7 @@ HostFont *hostfont_load(const char *fnt_path, const char *dds_path, char *err, i
         g->box.smooth = 1;
     }
     free(dds);
+    free(png);
     if (!hf->size) hf->size = hf->line_height ? hf->line_height : 20;
     return hf;
 }

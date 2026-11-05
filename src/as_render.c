@@ -16,11 +16,12 @@ static CXform cx_with_alpha(CXform cx, float alpha) {
 // ---- text fields --------------------------------------------------------------------
 
 static AsVm *g_vm;
-static AsStr *A_text;
+static AsStr *A_text, *A_ntext;
 
 void as_render_init(AsVm *vm) {
     g_vm = vm;
     A_text = as_atom(vm, "text");
+    A_ntext = as_atom(vm, "ntext");
 }
 
 // What a field shows: its variable (a path from the clip it's on) or its "text".
@@ -32,7 +33,17 @@ static const char *field_text(AsMc *tf) {
         if (found && v.t != V_UNDEF) return as_tostr(g_vm, v)->s;
     }
     AsProp *p = as_own(&tf->obj, A_text);
-    return p ? as_tostr(g_vm, p->v)->s : tf->text->text;
+    const char *s = p ? as_tostr(g_vm, p->v)->s : tf->text->text;
+    // Alien Hominid's console scripts set "ntext = N" and then clear "text": the executable
+    // draws its string N in the field
+    if ((!s || !*s) && g_vm->text_for_number) {
+        AsProp *n = as_own(&tf->obj, A_ntext);
+        if (n && n->v.t == V_NUM && n->v.n > 0) {
+            const char *t = g_vm->text_for_number(g_vm, (int)n->v.n);
+            if (t) return t;
+        }
+    }
+    return s;
 }
 
 // Plain text from a field's HTML: tags dropped, <br> and </p> as line breaks, entities decoded.

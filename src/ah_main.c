@@ -1,12 +1,11 @@
-// Castle Crashers Vita: runs the game's own ActionScript (MAIN.swf and the files it
-// loads) from the user's copy of the game in ux0:data/CastleCrashers/game and
-// .../levels. The game logic runs at its 30 frames a second; drawing is the
-// GPU shape renderer.
+// Alien Hominid HD Vita: runs the game's own ActionScript from the user's copy of the
+// game in ux0:data/AlienHominidHD/{game,levels,fonts}. The flow is the original's:
+// legal -> title (attract) -> main menu (menu.pak with pause.pak over it) -> intro ->
+// levels. The game logic runs at its 30 frames a second; drawing is the GPU shape
+// renderer from cc-vita.
 //
-// Controls (player 1): left stick move (light tilt walks, full tilt runs, as on the
-// original consoles), D-pad run, SQUARE light attack, TRIANGLE heavy, CROSS
-// jump/accept, CIRCLE projectile/item/back, L block, R magic, START pause,
-// right stick flicked left/right: previous/next item.
+// Controls (player 1): left stick or D-pad move, CROSS jump / accept, SQUARE shoot,
+// CIRCLE grenade / back, TRIANGLE interact, L/R roll left/right, START pause.
 // SELECT+UP shows the stats overlay, SELECT+START quits.
 #include <psp2/ctrl.h>
 #include <psp2/io/fcntl.h>
@@ -19,22 +18,21 @@
 #include <math.h>
 #include <string.h>
 #include <strings.h>
+#include <ctype.h>
 #include <vita2d.h>
 
 #include "as.h"
 #include "as_render.h"
+#include "ah_host.h"
 #include "audio.h"
-#include "cc_buttons.h"
 #include "cc_host.h"
 #include "hostfont.h"
 #include "render.h"
-#include "strtab.h"
 
 // parsed SWFs and the script heap (meshes live in GPU memory blocks outside it)
 int _newlib_heap_size_user = 160 * 1024 * 1024;
 
-#define DATA_DIR "ux0:data/CastleCrashers/"
-#define SAVE_PATH DATA_DIR "save.dat"   // the game's storage (profiles, levels, unlocks)
+#define DATA_DIR "ux0:data/AlienHominidHD/"
 #define MAX_BATCH 65535   // u16 indices; a multiple of 3
 #define SCREEN_W 960.0f
 #define SCREEN_H 544.0f
@@ -307,14 +305,13 @@ static void show_message(const char *line1, const char *line2) {
     vita2d_swap_buffers();
 }
 
+
 // ---- loading the game's files -------------------------------------------------------
 
-// "../player/player.swf" -> ux0:data/CastleCrashers/game/PLAYER.swf (or levels/).
-// Each file is parsed and uploaded once and kept while it's in use: the game loads
-// player.swf into every player slot and fx.swf into every effect. Files nothing uses any
-// more (levels left behind, the title's menu) are freed by free_unused_movies.
-#define MAX_MOVIES 160
-static struct { char name[64]; Movie *m; GpuBlock gpu; int keep; } g_movies[MAX_MOVIES];
+// "../alien/alien.swf", "attract.pak" -> ux0:data/AlienHominidHD/game/alien.pak (or levels/).
+// Each file is parsed and uploaded once and kept while it's in use.
+#define MAX_MOVIES 96
+static struct { char name[64]; Movie *m; GpuBlock gpu; } g_movies[MAX_MOVIES];
 static int g_nmovies;
 static char g_last_error[256];
 
@@ -322,31 +319,34 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
     (void)vm;
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
+    char name[64];
+    snprintf(name, sizeof name, "%s", base);
+    char *dot = strrchr(name, '.');
+    if (dot) *dot = 0;
+    for (char *p = name; *p; p++) *p = (char)tolower((unsigned char)*p);
+    strncat(name, ".pak", sizeof name - strlen(name) - 1);
     for (int i = 0; i < g_nmovies; i++)
-        if (!strcasecmp(g_movies[i].name, base)) return g_movies[i].m;
+        if (!strcmp(g_movies[i].name, name)) return g_movies[i].m;
     if (g_nmovies == MAX_MOVIES) return NULL;
     static const char *dirs[] = {"game", "levels"};
     for (int i = 0; i < 2; i++) {
         char path[256], err[256];
-        snprintf(path, sizeof path, DATA_DIR "%s/%s", dirs[i], base);
+        snprintf(path, sizeof path, DATA_DIR "%s/%s", dirs[i], name);
         SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
         if (fd < 0) continue;
         sceIoClose(fd);
-        if (g_show_loads) {   // debug overlay on: say which file is loading
+        if (g_show_loads) {
             char msg[128];
-            snprintf(msg, sizeof msg, "Loading %s...", base);
+            snprintf(msg, sizeof msg, "Loading %s...", name);
             show_message(msg, NULL);
-        }   // otherwise the last frame stays up; the game shows its own loading screen
+        }
         Movie *m = swf_load(path, err, sizeof err);
         if (!m) {
-            snprintf(g_last_error, sizeof g_last_error, "%s: %s", base, err);
+            snprintf(g_last_error, sizeof g_last_error, "%s: %s", name, err);
             return NULL;
         }
-        cc_repair_level(m);
-        cc_buttons_playstation(m, CC_BTN_STYLE_COLOURED);   // the game's button art as PlayStation buttons
-        cc_menu_vita_badge(m);                              // "Vita Edition" on the title
-        // bitmaps become textures; the pixels are then only on the GPU side
-        for (int c = 0; c < 65536; c++) {
+        ah_patch_movie(path, m);
+        for (int c = 0; c < 65536; c++) {   // bitmaps become textures
             if (m->chars[c].type != CHAR_BITMAP) continue;
             Bitmap *bm = m->chars[c].ptr;
             vita2d_texture *tex = vita2d_create_empty_texture_format(bm->w, bm->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
@@ -362,39 +362,29 @@ static Movie *vita_loader(AsVm *vm, const char *url) {
         blk->uid = -1;
         render_tessellate_all(m);
         if (render_upload(m, mesh_alloc, blk)) render_release_cpu(m);
-        snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", base);
+        snprintf(g_movies[g_nmovies].name, sizeof g_movies[0].name, "%s", name);
         g_movies[g_nmovies++].m = m;
         return m;
     }
-    snprintf(g_last_error, sizeof g_last_error, "missing %s", base);
+    snprintf(g_last_error, sizeof g_last_error, "missing %s", name);
     return NULL;
 }
 
-// a file the port itself draws from (MAIN, the pause book): never freed
-static Movie *host_movie(const char *name) {
-    Movie *m = vita_loader(NULL, name);
-    for (int i = 0; m && i < g_nmovies; i++)
-        if (g_movies[i].m == m) g_movies[i].keep = 1;
-    return m;
-}
-
-// Frees the files no clip or script function of the game belongs to any more. Their meshes
-// may be in the last frame's draw list and the recolour cache, so the GPU is let finish and
-// the cache starts over; the caller builds a new frame before drawing again. Returns how many.
+// Frees the files no clip or script function belongs to any more (levels left behind).
 static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
     Movie *ms[MAX_MOVIES];
     uint8_t used[MAX_MOVIES];
     for (int i = 0; i < g_nmovies; i++) ms[i] = g_movies[i].m;
     if (!as_movies_used(vm, ms, g_nmovies, used)) return 0;
     int unused = 0;
-    for (int i = 0; i < g_nmovies; i++) unused += !used[i] && !g_movies[i].keep;
+    for (int i = 0; i < g_nmovies; i++) unused += !used[i];
     if (!unused) return 0;
     vita2d_wait_rendering_done();
     recolour_cache_free(cache);
     recolour_cache_init(cache, cache_mem, cache_bytes);
     int n = 0;
     for (int i = 0; i < g_nmovies; i++) {
-        if (used[i] || g_movies[i].keep) { g_movies[n++] = g_movies[i]; continue; }
+        if (used[i]) { g_movies[n++] = g_movies[i]; continue; }
         Movie *m = g_movies[i].m;
         for (int c = 0; c < 65536; c++)
             if (m->chars[c].type == CHAR_BITMAP && ((Bitmap *)m->chars[c].ptr)->tex)
@@ -407,159 +397,57 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     return unused;
 }
 
-// ---- controls -> the key codes f_GetButtons gives port 1 ---------------------------
+// ---- controls -> the key codes the scripts read for port 1 ---------------------------
+// In game (f_GetAlienButtons): arrows 37-40, shoot 65, jump 83, grenade 68, interact 87,
+// roll left 81, roll right 69, start 49. Menus (pause.pak's pk1 clip): arrows, accept 97,
+// back 106, start 49, select 53.
 
 enum {
-    K_ACCEPT = 2, K_BACK = 3, K_LEFT = 37, K_UP = 38, K_RIGHT = 39, K_DOWN = 40,
-    K_START = 49, K_SELECT = 53, K_PUNCH1 = 65, K_R2 = 66, K_L2 = 67, K_PROJECTILE = 68,
-    K_MAGIC = 69, K_SHIELD = 81, K_JUMP = 83, K_PUNCH2 = 87,
-    // the light-tilt directions (f_Walk: these walk, the full ones above run)
-    K_WALK_LEFT = 117, K_WALK_UP = 118, K_WALK_RIGHT = 119, K_WALK_DOWN = 120,
+    K_LEFT = 37, K_UP = 38, K_RIGHT = 39, K_DOWN = 40, K_START = 49, K_SELECT = 53,
+    K_SHOOT = 65, K_GRENADE = 68, K_ROLL_RIGHT = 69, K_ROLL_LEFT = 81, K_JUMP = 83, K_INTERACT = 87,
+    K_ACCEPT = 97, K_BACK = 106,
 };
 
-#define STICK_DEAD 40   // of 128: below this the stick is centred
-#define STICK_RUN 100   // at or beyond this it's a full tilt
+#define STICK_DEAD 50   // of 128
 
-static void map_pad(const SceCtrlData *pad, int debug, int in_game) {
+static void map_pad(const SceCtrlData *pad) {
     memset(cc_keys, 0, sizeof cc_keys);
-    if (debug) return;
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
-    // the console scripts run on a full tilt and walk on a light one; the D-pad runs. Outside a
-    // level (map, stat screen, menus) only the full directions mean anything: any tilt is one.
-    int run = in_game ? STICK_RUN : STICK_DEAD;
-    if ((b & SCE_CTRL_LEFT) || lx <= -run) cc_keys[K_LEFT] = 1;
-    else if (lx <= -STICK_DEAD) cc_keys[K_WALK_LEFT] = 1;
-    if ((b & SCE_CTRL_RIGHT) || lx >= run) cc_keys[K_RIGHT] = 1;
-    else if (lx >= STICK_DEAD) cc_keys[K_WALK_RIGHT] = 1;
-    if ((b & SCE_CTRL_UP) || ly <= -run) cc_keys[K_UP] = 1;
-    else if (ly <= -STICK_DEAD) cc_keys[K_WALK_UP] = 1;
-    if ((b & SCE_CTRL_DOWN) || ly >= run) cc_keys[K_DOWN] = 1;
-    else if (ly >= STICK_DEAD) cc_keys[K_WALK_DOWN] = 1;
-    // the right stick stands in for L2/R2 (switching items). The script steps once per
-    // press and waits for the release, so a flick past the deadzone is one step and the
-    // stick re-arms when it comes back to the centre.
-    int rx = pad->rx - 128;
-    if (rx <= -STICK_RUN + 20) cc_keys[K_L2] = 1;
-    if (rx >= STICK_RUN - 20) cc_keys[K_R2] = 1;
-    if (b & SCE_CTRL_CROSS) cc_keys[K_ACCEPT] = cc_keys[K_JUMP] = 1;
-    if (b & SCE_CTRL_CIRCLE) cc_keys[K_BACK] = cc_keys[K_PROJECTILE] = 1;
-    if (b & SCE_CTRL_SQUARE) cc_keys[K_PUNCH1] = 1;
-    if (b & SCE_CTRL_TRIANGLE) cc_keys[K_PUNCH2] = 1;
-    // the PlayStation layout's sides: block on the left (L2), magic on the right (R2)
-    if (b & SCE_CTRL_LTRIGGER) cc_keys[K_SHIELD] = 1;
-    if (b & SCE_CTRL_RTRIGGER) cc_keys[K_MAGIC] = 1;
+    if ((b & SCE_CTRL_LEFT) || lx <= -STICK_DEAD) cc_keys[K_LEFT] = 1;
+    if ((b & SCE_CTRL_RIGHT) || lx >= STICK_DEAD) cc_keys[K_RIGHT] = 1;
+    if ((b & SCE_CTRL_UP) || ly <= -STICK_DEAD) cc_keys[K_UP] = 1;
+    if ((b & SCE_CTRL_DOWN) || ly >= STICK_DEAD) cc_keys[K_DOWN] = 1;
+    if (b & SCE_CTRL_CROSS) cc_keys[K_JUMP] = cc_keys[K_ACCEPT] = 1;
+    if (b & SCE_CTRL_SQUARE) cc_keys[K_SHOOT] = 1;
+    if (b & SCE_CTRL_CIRCLE) cc_keys[K_GRENADE] = cc_keys[K_BACK] = 1;
+    if (b & SCE_CTRL_TRIANGLE) cc_keys[K_INTERACT] = 1;
+    if (b & SCE_CTRL_LTRIGGER) cc_keys[K_ROLL_LEFT] = 1;
+    if (b & SCE_CTRL_RTRIGGER) cc_keys[K_ROLL_RIGHT] = 1;
     if (b & SCE_CTRL_START) cc_keys[K_START] = 1;
 }
 
-// ---- pause menu ----------------------------------------------------------------------
-// The original draws its pause menu in castle.exe (PAUSE.swf only holds the art) and
-// tells the scripts through g_nPort<n>State: 2 paused, 1 playing, 3 quit to the map.
-
-typedef struct {
-    int open, sel, page;       // page 0: the menu, 1: controls
-    DrawList art;              // the pause book, drawn over the frozen game
-    int have_art;
-    float book[4];             // where the book is on screen
-} Pause;
-
-static const char *PAUSE_ITEMS[] = {"Resume", "Controls", "Quit to Map"};
-#define NPAUSE_ITEMS 3
-
-static int in_level(AsVm *vm) {
-    int found;
-    AsVal g = as_resolve_path(vm, vm->root, "loader.game.game", &found);
-    return found && g.t == V_OBJ && g.o->type == OBJ_MC;
+static void vita_warn(AsVm *vm, const char *msg) {
+    (void)vm;
+    snprintf(g_last_error, sizeof g_last_error, "%s", msg);
 }
 
-// the pause book from PAUSE.swf, centred, about 60% of the screen wide
-static void pause_build_art(Pause *ps) {
-    Movie *pm = host_movie("PAUSE.swf");
-    ps->have_art = 0;
-    if (!pm) return;
-    int cid = -1;
-    for (int c = 0; c < 65536 && cid < 0; c++)
-        if (pm->chars[c].type == CHAR_SPRITE && pm->chars[c].export && !strcmp(pm->names[pm->chars[c].export], "bookbg"))
-            cid = c;
-    if (cid < 0) return;
-    Mat id = {1, 0, 0, 1, 0, 0};
-    render_begin(&ps->art);
-    ps->art.view[2] = 0;   // no culling while measuring
-    render_char(pm, cid, id, CX_IDENTITY, 0, &ps->art);
-    float b[4] = {1e30f, 1e30f, -1e30f, -1e30f};
-    for (int k = 0; k < ps->art.n; k++) {
-        const float *mb = ps->art.items[k].mesh->bounds;
-        Mat mm = ps->art.items[k].m;
-        for (int q = 0; q < 4; q++) {
-            float x = mb[q & 1 ? 2 : 0], y = mb[q & 2 ? 3 : 1];
-            float px = mm.a * x + mm.c * y + mm.tx, py = mm.b * x + mm.d * y + mm.ty;
-            if (px < b[0]) b[0] = px;
-            if (px > b[2]) b[2] = px;
-            if (py < b[1]) b[1] = py;
-            if (py > b[3]) b[3] = py;
-        }
-    }
-    if (b[2] <= b[0]) return;
-    float s = SCREEN_W * 0.6f / (b[2] - b[0]);
-    if ((b[3] - b[1]) * s > SCREEN_H * 0.8f) s = SCREEN_H * 0.8f / (b[3] - b[1]);
-    float w = (b[2] - b[0]) * s, h = (b[3] - b[1]) * s;
-    Mat m = {s, 0, 0, s, (SCREEN_W - w) / 2 - b[0] * s, (SCREEN_H - h) / 2 - b[1] * s};
-    render_begin(&ps->art);
-    ps->art.view[2] = 0;
-    render_char(pm, cid, m, CX_IDENTITY, 0, &ps->art);
-    ps->book[0] = (SCREEN_W - w) / 2;
-    ps->book[1] = (SCREEN_H - h) / 2;
-    ps->book[2] = ps->book[0] + w;
-    ps->book[3] = ps->book[1] + h;
-    ps->have_art = 1;
-}
-
-static void pause_set_state(AsVm *vm, int state) { cc_set_flash_global(vm, "g_nPort1State", as_num(state)); }
-
-// one frame of the open menu: returns 1 while it stays open
-static int pause_input(Pause *ps, AsVm *vm, unsigned pressed) {
-    if (ps->page == 1) {   // controls page: any of these goes back
-        if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) ps->page = 0;
-        return 1;
-    }
-    if (pressed & SCE_CTRL_UP) ps->sel = (ps->sel + NPAUSE_ITEMS - 1) % NPAUSE_ITEMS;
-    if (pressed & SCE_CTRL_DOWN) ps->sel = (ps->sel + 1) % NPAUSE_ITEMS;
-    if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_START)) { pause_set_state(vm, 1); return 0; }
-    if (pressed & SCE_CTRL_CROSS) {
-        if (ps->sel == 0) { pause_set_state(vm, 1); return 0; }
-        if (ps->sel == 1) { ps->page = 1; return 1; }
-        pause_set_state(vm, 3);   // the scripts take the party back to the map
-        return 0;
-    }
-    return 1;
-}
-
-static void pause_draw(Pause *ps) {
-    vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, 140));
-    float x0 = SCREEN_W * 0.3f, y0 = SCREEN_H * 0.3f, x1 = SCREEN_W * 0.7f;
-    if (ps->have_art) {
-        draw_list(&ps->art);
-        x0 = ps->book[0] + (ps->book[2] - ps->book[0]) * 0.18f;
-        x1 = ps->book[2] - (ps->book[2] - ps->book[0]) * 0.18f;
-        y0 = ps->book[1] + (ps->book[3] - ps->book[1]) * 0.25f;
-    } else {
-        vita2d_draw_rectangle(x0 - 20, y0 - 60, x1 - x0 + 40, 260, RGBA8(237, 222, 180, 255));
-    }
-    unsigned ink = RGBA8(70, 45, 20, 255), hi = RGBA8(190, 40, 30, 255);
-    if (ps->page == 1) {
-        static const char *lines[] = {
-            "Left stick: walk / run",    "Square: light attack",  "Triangle: heavy attack",
-            "Cross: jump",               "Circle: use item",      "L: block",
-            "R (hold) + attack: magic",  "Right stick left/right: switch item", "Start: pause",
-        };
-        for (int i = 0; i < 9; i++) vita2d_pgf_draw_text(g_font, x0, y0 + i * 26, ink, 0.9f, lines[i]);
-        vita2d_pgf_draw_text(g_font, x0, y0 + 9 * 26 + 14, hi, 0.9f, "Circle: back");
+static void load_font(void) {
+    char err[256];
+    HostFont *font = hostfont_load(DATA_DIR "fonts/synjunicode_20.fnt", DATA_DIR "fonts/synjunicode_20_0.png", err,
+                                   sizeof err);
+    if (!font) {
+        snprintf(g_last_error, sizeof g_last_error, "%s", err);
         return;
     }
-    vita2d_pgf_draw_text(g_font, x0, y0, ink, 1.2f, "Paused");
-    for (int i = 0; i < NPAUSE_ITEMS; i++)
-        vita2d_pgf_draw_textf(g_font, x0 + 10, y0 + 50 + i * 40, i == ps->sel ? hi : ink, 1.1f, "%s%s",
-                              i == ps->sel ? "> " : "  ", PAUSE_ITEMS[i]);
+    Bitmap *a = &font->atlas;
+    vita2d_texture *tex = vita2d_create_empty_texture_format(a->w, a->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+    if (!tex) return;
+    uint8_t *dst = vita2d_texture_get_datap(tex);
+    unsigned stride = vita2d_texture_get_stride(tex);
+    for (int y = 0; y < a->h; y++) memcpy(dst + y * stride, a->rgba + (size_t)y * a->w * 4, (size_t)a->w * 4);
+    a->tex = tex;
+    as_render_set_font(font);
 }
 
 static void vita_sound_start(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner) {
@@ -572,134 +460,13 @@ static void vita_sound_stop(AsVm *vm, const void *owner) {
     audio_sfx_stop(owner);
 }
 
-static void vita_warn(AsVm *vm, const char *msg) {
+static void vita_sound_set(AsVm *vm, const void *owner, float volume, float pan) {
     (void)vm;
-    snprintf(g_last_error, sizeof g_last_error, "%s", msg);
+    audio_sfx_set(owner, volume, pan);
 }
 
-// ---- title screen and main menu --------------------------------------------------------
-// The original's executable shows MENU.swf's opening frame (the logo and the knights, with
-// the title music), then attaches its "buttonchoices" panel and runs the menu itself: the
-// highlight, the moves and what each button does aren't in the files. Here: START or CROSS
-// on the title brings the panel up; the D-pad/stick moves (the chosen button grows, as the
-// panel's buttons do in the original), CROSS picks. Local Game starts the game, Help &
-// Options shows the controls page, Quit leaves; the online, download, leaderboard and store
-// buttons say they aren't on the Vita. It all runs in a VM of its own, before the game's VM
-// is set up (cc_host keeps per-VM state).
+static void stop_all_sfx(void) { audio_sfx_stop(NULL); }
 
-static void outlined_text(int x, int y, float size, const char *s) {
-    for (int dx = -2; dx <= 2; dx += 2)
-        for (int dy = -2; dy <= 2; dy += 2)
-            vita2d_pgf_draw_text(g_font, x + dx, y + dy, RGBA8(0, 0, 0, 255), size, s);
-    vita2d_pgf_draw_text(g_font, x, y, RGBA8(255, 255, 255, 255), size, s);
-}
-
-static void title_screen(DrawList *vb, RecolourCache *cache, void *cache_mem, size_t cache_bytes) {
-    Movie *m = vita_loader(NULL, "MENU.swf");
-    if (!m) return;
-    AsVm *t = as_new(vita_loader);
-    t->sound_start = vita_sound_start;
-    t->sound_stop = vita_sound_stop;
-    t->warn = vita_warn;
-    cc_host_init(t);
-    as_render_init(t);
-    t->root = as_mc_new(t, m, &m->root, NULL, 0);
-    cc_native_root_functions(t, &t->root->obj);
-    const char *prompt = strtab_number(1);   // the game's "Press START"
-    if (!prompt) prompt = "Press START";
-    const char *unavailable = strtab_get("vita.online.unavailable");
-    if (!unavailable) unavailable = "Not available on PS Vita";
-    AsMc *panel = NULL;
-    int item = 0, message = 0;
-    static Pause controls;   // Help & Options: the pause book's controls page
-    SceCtrlData pad, old = {0};
-    sceCtrlPeekBufferPositive(0, &old, 1);
-    SceUInt64 prev = sceKernelGetProcessTimeWide(), acc = 0;
-    const SceUInt64 tick_us = 1000000 / 30;
-    unsigned frame = 0;
-    for (;;) {
-        sceCtrlPeekBufferPositive(0, &pad, 1);
-        unsigned pressed = pad.buttons & ~old.buttons;
-        int ly = pad.ly - 128, lx = pad.lx - 128, oly = old.ly - 128, olx = old.lx - 128;
-        if (ly < -80 && oly >= -80) pressed |= SCE_CTRL_UP;   // the stick moves once per push
-        if (ly > 80 && oly <= 80) pressed |= SCE_CTRL_DOWN;
-        if (lx < -80 && olx >= -80) pressed |= SCE_CTRL_LEFT;
-        if (lx > 80 && olx <= 80) pressed |= SCE_CTRL_RIGHT;
-        old = pad;
-        if (controls.open) {
-            if (pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS | SCE_CTRL_START)) controls.open = 0;
-        } else if (!panel) {
-            if (pressed & (SCE_CTRL_START | SCE_CTRL_CROSS)) {
-                // left of the knights, over the (hidden, empty) news box
-                panel = cc_menu_attach(t, m->stage_w * 0.226f, m->stage_h * 0.635f);
-                if (!panel) break;   // no panel in this copy of the file: straight into the game
-                cc_menu_highlight(t, panel, item);
-            }
-        } else {
-            int moved = 0;
-            if (pressed & (SCE_CTRL_UP | SCE_CTRL_LEFT)) { item = (item + CC_MENU_ITEMS - 1) % CC_MENU_ITEMS; moved = 1; }
-            if (pressed & (SCE_CTRL_DOWN | SCE_CTRL_RIGHT)) { item = (item + 1) % CC_MENU_ITEMS; moved = 1; }
-            if (moved) cc_menu_highlight(t, panel, item);
-            if (pressed & SCE_CTRL_CROSS) {
-                if (item == CC_MENU_PLAY) break;
-                if (item == CC_MENU_QUIT) {
-                    vita2d_wait_rendering_done();
-                    audio_shutdown();
-                    vita2d_fini();
-                    sceKernelExitProcess(0);
-                }
-                if (item == CC_MENU_OPTIONS) {
-                    controls.open = 1;
-                    controls.page = 1;
-                    if (!controls.have_art) pause_build_art(&controls);
-                }
-            }
-        }
-        memset(cc_keys, 0, sizeof cc_keys);
-        SceUInt64 now = sceKernelGetProcessTimeWide();
-        acc += now - prev;
-        prev = now;
-        if (acc > 2 * tick_us) acc = 2 * tick_us;
-        int ticked = 0;
-        while (acc >= tick_us) {
-            as_tick(t);
-            as_gc(t);
-            acc -= tick_us;
-            ticked = 1;
-        }
-        if (ticked) {
-            if (cache->used > cache->cap * 9 / 10 || cache->entries * 4 >= cache->table_size * 3) {
-                vita2d_wait_rendering_done();
-                recolour_cache_free(cache);
-                recolour_cache_init(cache, cache_mem, cache_bytes);
-            }
-            float k = SCREEN_W / m->stage_w;
-            Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
-            render_begin(vb);
-            as_render_mc(t->root, screen, CX_IDENTITY, vb);
-        }
-        vita2d_set_clear_color(RGBA8(m->bg[0], m->bg[1], m->bg[2], 255));
-        vita2d_start_drawing();
-        vita2d_clear_screen();
-        draw_list(vb);
-        frame++;
-        if (!panel && (frame / 30) % 2 == 0) {   // blinking, over the news box at the bottom left
-            int w = vita2d_pgf_text_width(g_font, 1.2f, prompt);
-            outlined_text(180 - w / 2, 470, 1.2f, prompt);
-        }
-        if (message > 0) {
-            message--;
-            int w = vita2d_pgf_text_width(g_font, 1.0f, unavailable);
-            outlined_text((SCREEN_W - w) / 2, SCREEN_H - 24, 1.0f, unavailable);
-        }
-        if (controls.open) pause_draw(&controls);
-        vita2d_end_drawing();
-        vita2d_swap_buffers();
-    }
-    vita2d_wait_rendering_done();
-    if (cc_music_stop) cc_music_stop();
-    memset(cc_keys, 0, sizeof cc_keys);
-}
 int main(void) {
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
@@ -712,13 +479,43 @@ int main(void) {
     g_indices = gpu_alloc(sizeof(uint16_t) * MAX_BATCH, &g_index_block);
     for (int i = 0; g_indices && i < MAX_BATCH; i++) g_indices[i] = i;
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    load_font();
 
-    Movie *start = host_movie("MAIN.swf");
-    if (!start) {
+    DrawList vb = {0};
+    vb.view[2] = SCREEN_W;
+    vb.view[3] = SCREEN_H;
+    GpuBlock cache_gpu = {-1, NULL};
+    const size_t cache_bytes = 16 * 1024 * 1024;
+    RecolourCache cache;
+    void *cache_mem = gpu_alloc(cache_bytes, &cache_gpu);
+    recolour_cache_init(&cache, cache_mem, cache_bytes);
+    vb.cache = &cache;
+
+    AsVm *vm = as_new(vita_loader);
+    vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;
+    vm->warn = vita_warn;
+    vm->sound_start = vita_sound_start;
+    vm->sound_stop = vita_sound_stop;
+    vm->sound_set = vita_sound_set;
+    cc_host_init(vm);
+    ah_host_init(vm);
+    snprintf(ah_data_dir, sizeof ah_data_dir, "%s", DATA_DIR);
+    ah_load_strings(DATA_DIR "loc/en.dct");   // the menus' words (the SWF's copy is the fallback)
+    // the PC copy's data/sounds and data/music; the game runs silent without them
+    audio_init(DATA_DIR);
+    cc_music_play = audio_music_play;
+    cc_music_stop = audio_music_stop;
+    ah_music_pause = audio_music_pause;
+    ah_audio_volumes = audio_set_volumes;
+    ah_sfx_stop_all = stop_all_sfx;
+    ah_sfx_hold = audio_sfx_hold;
+    ah_save_load(DATA_DIR "save.dat");   // unlocks, Load Level, options and volumes
+    as_render_init(vm);
+    if (!ah_start(vm, "legal.pak")) {
         SceCtrlData pad;
         for (;;) {
-            show_message(g_last_error, "Copy the game and levels folders from your own game files to " DATA_DIR
-                                       "   (START: quit)");
+            show_message(g_last_error, "Copy the game, levels and fonts folders from your own game's data folder to "
+                                       DATA_DIR "   (START: quit)");
             sceCtrlPeekBufferPositive(0, &pad, 1);
             if (pad.buttons & SCE_CTRL_START) break;
         }
@@ -727,56 +524,8 @@ int main(void) {
         return 0;
     }
 
-    cc_storage_load(SAVE_PATH);
-    // the game's words (from the user's castle.exe by extract_strings.py), then Vita wording
-    strtab_load(DATA_DIR "strings_en.txt");
-    strtab_load(DATA_DIR "strings_vita_en.txt");
-    audio_init(DATA_DIR);
-    cc_music_play = audio_music_play;
-    cc_music_stop = audio_music_stop;
-    // the game's own text font (from the PC copy's data/fonts); text is left out without it
-    char ferr[256];
-    HostFont *font = hostfont_load(DATA_DIR "fonts/synjUnicode_20.fnt", DATA_DIR "fonts/synjUnicode_20_0.dds", ferr,
-                                   sizeof ferr);
-    if (font) {
-        Bitmap *a = &font->atlas;
-        vita2d_texture *tex = vita2d_create_empty_texture_format(a->w, a->h, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
-        if (tex) {
-            uint8_t *dst = vita2d_texture_get_datap(tex);
-            unsigned stride = vita2d_texture_get_stride(tex);
-            for (int y = 0; y < a->h; y++) memcpy(dst + y * stride, a->rgba + (size_t)y * a->w * 4, (size_t)a->w * 4);
-            a->tex = tex;
-            as_render_set_font(font);
-        }
-    } else {
-        snprintf(g_last_error, sizeof g_last_error, "%s", ferr);
-    }
-
-    DrawList vb = {0};
-    vb.view[2] = SCREEN_W;
-    vb.view[3] = SCREEN_H;
-    // recoloured meshes (colour transforms, masks) kept across frames
-    GpuBlock cache_gpu = {-1, NULL};
-    const size_t cache_bytes = 16 * 1024 * 1024;
-    RecolourCache cache;
-    void *cache_mem = gpu_alloc(cache_bytes, &cache_gpu);
-    recolour_cache_init(&cache, cache_mem, cache_bytes);
-    vb.cache = &cache;
-
-    title_screen(&vb, &cache, cache_mem, cache_bytes);
-
-    AsVm *vm = as_new(vita_loader);
-    vm->rand_state = (uint32_t)sceKernelGetProcessTimeWide() ^ 0x9E3779B9u;   // Flash's random() differs each session
-    vm->sound_start = vita_sound_start;
-    vm->sound_stop = vita_sound_stop;
-    vm->warn = vita_warn;
-    cc_host_init(vm);
-    as_render_init(vm);
-    vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
-
     SceCtrlData pad, old = {0};
     int overlay = 0;
-    static Pause pause;
     SceUInt64 last = sceKernelGetProcessTimeWide(), acc = 0, prev = last;
     float fps = 0, tick_ms = 0, build_ms = 0, shown_tick = 0, shown_build = 0;
     int frames = 0, ticks = 0;
@@ -791,74 +540,92 @@ int main(void) {
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
-        // in a level, Start is the pause menu's (the executable's in the original)
-        int level = in_level(vm);
-        map_pad(&pad, debug, level);
-        if (level) cc_keys[K_START] = 0;
-        if (pause.open) {
-            pause.open = pause_input(&pause, vm, pressed);
-            memset(cc_keys, 0, sizeof cc_keys);
-        } else if (level && !debug && (pressed & SCE_CTRL_START) &&
-                   !as_tobool(vm, cc_flash_global(vm, "g_bNoPause"))) {
-            pause.open = 1;
-            pause.sel = pause.page = 0;
-            pause_set_state(vm, 2);
-            if (!pause.have_art) pause_build_art(&pause);
+        if (debug) memset(cc_keys, 0, sizeof cc_keys);
+        else map_pad(&pad);
+        // in a level, START only opens the pause menu, and SELECT (alone) is the key the HUD
+        // reads to spend a continue; Select with Start or Up stays the debug combos
+        if (ah_in_level() && !vm->overlay) {
+            cc_keys[K_START] = 0;
+            if (debug && !(pad.buttons & (SCE_CTRL_START | SCE_CTRL_UP))) cc_keys[K_START] = 1;
         }
+        // START in a level opens the pause menu (the exe's job in the original); the menus
+        // read START themselves
+        if (!debug && (pressed & SCE_CTRL_START) && !vm->overlay) ah_request_pause(vm, 0);
 
-        // run the game's frames that are due (at most two, so a slow frame doesn't snowball)
         SceUInt64 now = sceKernelGetProcessTimeWide();
+        if (now - prev > 1000000) audio_resumed();   // a second without a frame: the app was suspended
         acc += now - prev;
         prev = now;
         if (acc > 2 * tick_us) acc = 2 * tick_us;
-        if (pause.open) acc = 0;   // the game stands still under the menu
         int ticked = 0;
         while (acc >= tick_us) {
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
-            as_tick(vm);
+            ah_tick(vm);
             as_gc(vm);
             tick_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
             ticks++;
             acc -= tick_us;
             ticked = 1;
+            if (ah_loading) break;   // each loading-screen tick is shown before the next (one may load the level)
         }
-        if (cc_save_requested) {
-            cc_save_requested = 0;
-            if (!cc_storage_save(SAVE_PATH)) snprintf(g_last_error, sizeof g_last_error, "couldn't write " SAVE_PATH);
-        }
+        if (ticked && vm->tick % 60 == 0) ah_save_tick();   // written within two seconds of a change
 
+        const Movie *root = vm->root->movie;
         if (ticked) {
-            // every few seconds, once the heap is half full: let go of the files left behind
-            // (levels played earlier, the title). Below that they stay, so going back to the
-            // map or replaying a level doesn't load them again.
             if (vm->tick - last_free >= 90 && mallinfo().uordblks > (size_t)_newlib_heap_size_user / 2) {
                 last_free = vm->tick;
                 free_unused_movies(vm, &cache, cache_mem, cache_bytes);
             }
-            // a full recolour cache stops helping: start it over (after the GPU is done with it)
             if (cache.used > cache.cap * 9 / 10 || cache.entries * 4 >= cache.table_size * 3) {
                 vita2d_wait_rendering_done();
                 recolour_cache_free(&cache);
                 recolour_cache_init(&cache, cache_mem, cache_bytes);
             }
             SceUInt64 t0 = sceKernelGetProcessTimeWide();
-            float k = SCREEN_W / start->stage_w;
+            float k = SCREEN_W / root->stage_w;
             Mat screen = {k / 20, 0, 0, k / 20, 0, 0};
             render_begin(&vb);
-            as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (ah_loading) {   // the loading screen covers everything
+                float kl = SCREEN_W / ah_loading->movie->stage_w;
+                Mat sl = {kl / 20, 0, 0, kl / 20, 0, 0};
+                as_render_mc(ah_loading, sl, CX_IDENTITY, &vb);
+            } else {
+                as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+                if (ah_unlock_layer) {   // unlock banners
+                    float ku = SCREEN_W / ah_unlock_layer->movie->stage_w;
+                    Mat su = {ku / 20, 0, 0, ku / 20, 0, 0};
+                    as_render_mc(ah_unlock_layer, su, CX_IDENTITY, &vb);
+                }
+            }
+            if (vm->overlay && !ah_loading) {   // the menu/pause layer
+                float ko = SCREEN_W / vm->overlay->movie->stage_w;
+                Mat so = {ko / 20, 0, 0, ko / 20, 0, 0};
+                as_render_mc(vm->overlay, so, CX_IDENTITY, &vb);
+            }
             build_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
         }
 
-        vita2d_set_clear_color(RGBA8(start->bg[0], start->bg[1], start->bg[2], 255));
+        // a frame with nothing on it between two movies (the title clears itself the tick
+        // before it loads the menu) would flash the stage colour: keep the last picture up
+        // instead, for a few frames (about 100 ms) at most
+        static int presented, held;
+        if (presented && vb.n == 0 && !overlay && held < 6) {
+            held++;
+            sceKernelDelayThread(16667);   // what waiting for the swap would have taken
+            continue;
+        }
+        held = 0;
+        presented = 1;
+        const Movie *shown = ah_loading ? ah_loading->movie : root;
+        vita2d_set_clear_color(RGBA8(shown->bg[0], shown->bg[1], shown->bg[2], 255));
         draw_frame(&vb, heat_clock++);
-        if (pause.open) pause_draw(&pause);
         if (overlay) {
             unsigned ink = RGBA8(255, 255, 255, 255);
             vita2d_draw_rectangle(0, 0, SCREEN_W, 64, RGBA8(0, 0, 0, 150));
             vita2d_pgf_draw_textf(g_font, 12, 24, ink, 0.8f,
-                                  "%.0f fps   script %.1f ms   build %.1f ms   %d tris  %d draws  cpu-coloured %d   heap %u objs",
+                                  "%.0f fps   script %.1f ms   build %.1f ms   %d tris  %d draws   heap %u objs",
                                   fps, shown_tick, shown_build, render_stats.triangles, render_stats.draws,
-                                  render_stats.cx_tris, (unsigned)vm->heap_count);
+                                  (unsigned)vm->heap_count);
             vita2d_pgf_draw_textf(g_font, 12, 50, ink, 0.8f, "%d files, %.1f MB GPU, heap %.1f of %d MB   %s",
                                   g_nmovies, g_gpu_bytes / 1048576.0, mallinfo().uordblks / 1048576.0,
                                   _newlib_heap_size_user >> 20, g_last_error);
@@ -878,8 +645,9 @@ int main(void) {
         }
     }
 
-    vita2d_wait_rendering_done();
+    ah_save_tick();
     audio_shutdown();
+    vita2d_wait_rendering_done();
     as_free(vm);
     for (int i = 0; i < g_nmovies; i++) {
         for (int c = 0; c < 65536; c++)

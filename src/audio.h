@@ -1,7 +1,7 @@
-// Sound on the Vita: the game's sound effects and music as MP3 files (converted from
-// the user's own copy), decoded with mpg123 and mixed into one output port.
-//   sound effects: <dir>/sfx/<linkage without extension>.mp3, decoded on first use and kept (LRU)
-//   music:         <dir>/music/<name>.mp3, streamed
+// Sound on the Vita: the game's own sound files (MS ADPCM WAVs named .adpcm, copied from
+// the user's own PC copy), mixed into one output port.
+//   sound effects: <dir>sounds/<linkage>.adpcm, decoded on first use and kept (LRU)
+//   music:         <dir>music/<name>.adpcm, streamed
 #ifndef CC_AUDIO_H
 #define CC_AUDIO_H
 
@@ -10,7 +10,12 @@ void audio_shutdown(void);
 
 void audio_sfx_play(const char *linkage, float volume, float pan, int loops, const void *owner);
 void audio_sfx_stop(const void *owner);   // what owner started; NULL: everything
+void audio_sfx_set(const void *owner, float volume, float pan);   // what owner is playing
 void audio_music_play(const char *name, int loop);
 void audio_music_stop(void);
+void audio_music_pause(int paused);
+void audio_sfx_hold(int hold);   // 1: freeze the sounds playing now (the pause menu's still play); 0: resume them
+void audio_resumed(void);   // call when the app comes back from being suspended
+void audio_set_volumes(float music, float sfx);   // 0..1; a negative value leaves that one
 
 #endif

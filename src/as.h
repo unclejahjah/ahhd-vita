@@ -186,6 +186,7 @@ struct AsVm {
     AsVal global_regs[4];
     AsObj *global;              // _global
     AsMc *root;                 // _level0
+    AsMc *overlay;              // a second movie drawn over the root (AH's menu/pause layer), or NULL
     AsObj *object_proto, *function_proto, *array_proto, *string_proto, *number_proto,
           *boolean_proto, *mc_proto, *color_proto, *sound_proto;
     AsStr *empty;               // ""
@@ -203,6 +204,8 @@ struct AsVm {
     // Sound objects: play an attached sound (linkage name), stop what one object started
     void (*sound_start)(AsVm *vm, const char *linkage, float volume, float pan, int loops, const void *owner);
     void (*sound_stop)(AsVm *vm, const void *owner);
+    // optional: setVolume/setPan on a Sound that is playing (volume 0..1, pan -1..1)
+    void (*sound_set)(AsVm *vm, const void *owner, float volume, float pan);
     // each tick, after the frame scripts ran and before onEnterFrame (host work that needs
     // freshly placed clips to have run their first frame)
     void (*after_frame_scripts)(AsVm *vm);

@@ -16,6 +16,8 @@
 #include "../src/cc_buttons.h"
 #include "../src/cc_host.h"
 #include "../src/enemy.h"
+#include "../src/ah_view.h"
+#include "../src/ah_host.h"
 
 #define MAX_W 960
 #define MAX_H 544
@@ -462,6 +464,19 @@ static Movie *host_loader(AsVm *vm, const char *url) {
     const char *base = strrchr(url, '/');
     base = base ? base + 1 : url;
     load_count++;
+    // Alien Hominid HD's scripts load "../alien/alien.swf"; the install has game/alien.pak
+    char pakname[256];
+    const char *dot = strrchr(base, '.');
+    if (dot && !strcasecmp(dot, ".swf")) {
+        snprintf(pakname, sizeof pakname, "%.*s.pak", (int)(dot - base), base);
+        for (int i = 0; i < 2 && base != pakname; i++) {
+            static const char *pdirs[] = {"game", "levels"};
+            char p[1200];
+            snprintf(p, sizeof p, "%s/%s/%s", game_dir, pdirs[i], pakname);
+            FILE *f = fopen(p, "rb");
+            if (f) { fclose(f); base = pakname; }
+        }
+    }
     for (int i = 0; i < nmovie_cache; i++)
         if (!strcasecmp(movie_cache[i].name, base)) return movie_cache[i].m;
     static const char *dirs[] = {"game", "levels"};
@@ -477,6 +492,7 @@ static Movie *host_loader(AsVm *vm, const char *url) {
                 snprintf(path, sizeof path, "%s/%s", dirpath, de->d_name);
                 closedir(d);
                 Movie *m = swf_load(path, err, sizeof err);
+                if (m) ah_patch_movie(path, m);
                 int fixed = m ? cc_repair_level(m) : 0;
     if (m && getenv("CC_DUMP_SHAPE") && !strcmp(base, "MENU.swf")) {
         extern void cc_dump_shape(Movie *m, int cid);
@@ -523,9 +539,12 @@ static void host_sound(AsVm *vm, const char *linkage, float vol, float pan, int 
     if (getenv("AS_SOUNDS")) printf("  [sound] %s vol %.2f pan %.2f loops %d\n", linkage, vol, pan, loops);
 }
 
+static void host_ah_log(const char *line) { printf("  [host] %s\n", line); }
+
 static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
+    snprintf(ah_data_dir, sizeof ah_data_dir, "%s/", argv[2]);
     int frames = argc > 5 ? atoi(argv[5]) : 60, every = argc > 6 ? atoi(argv[6]) : 30;
     Movie *start = host_loader(NULL, argv[3]);
     if (!start) return 1;
@@ -539,6 +558,9 @@ static int as_mode(int argc, char **argv) {
     vm->trace = host_trace;
     extern void cc_host_init(AsVm *vm);
     cc_host_init(vm);
+    ah_host_init(vm);
+    ah_log = host_ah_log;
+    if (getenv("CC_DCT")) printf("strings: %d from %s\n", ah_load_strings(getenv("CC_DCT")), getenv("CC_DCT"));   // data/loc/en.dct
     // CC_SAVE=path: start from a save file (cc_host.c's "CCS2" format), like the Vita's save.dat
     if (getenv("CC_SAVE") && !cc_storage_load(getenv("CC_SAVE")))
         printf("  couldn't read save %s\n", getenv("CC_SAVE"));
@@ -552,8 +574,8 @@ static int as_mode(int argc, char **argv) {
     vm->sound_start = host_sound;
     if (getenv("CC_FONT_DIR")) {   // the PC copy's data/fonts
         char fnt[600], dds[600], err[256];
-        snprintf(fnt, sizeof fnt, "%s/synjUnicode_20.fnt", getenv("CC_FONT_DIR"));
-        snprintf(dds, sizeof dds, "%s/synjUnicode_20_0.dds", getenv("CC_FONT_DIR"));
+        snprintf(fnt, sizeof fnt, "%s/synjunicode_20.fnt", getenv("CC_FONT_DIR"));   // AH's names
+        snprintf(dds, sizeof dds, "%s/synjunicode_20_0.png", getenv("CC_FONT_DIR"));
         HostFont *hf = hostfont_load(fnt, dds, err, sizeof err);
         if (hf) {
             printf("font: size %d, line %d, base %d, atlas %dx%d\n", hf->size, hf->line_height, hf->base, hf->atlas.w, hf->atlas.h);
@@ -562,7 +584,8 @@ static int as_mode(int argc, char **argv) {
             printf("font: %s\n", err);
         }
     }
-    vm->root = as_mc_new(vm, start, &start->root, NULL, 0);
+    if (getenv("AH_SAVE")) ah_save_load(getenv("AH_SAVE"));   // AH_SAVE=file: load it first, write it at the end
+    if (!ah_start(vm, argv[3])) return 1;
     W = MAX_W; H = MAX_H;
     DrawList vb = {0};
     vb.view[2] = W;
@@ -630,7 +653,17 @@ static int as_mode(int argc, char **argv) {
         extern double as_time_ms(void);
         double t0 = as_time_ms();
         long long ops0 = vm->ops;
-        as_tick(vm);
+        // CC_PAUSE="frame,frame": START in game (the exe's pause button)
+        for (const char *p = getenv("CC_PAUSE"); p && *p;) {
+            if (atoi(p) == f) printf("  [pause] at frame %d: %s\n", f, ah_request_pause(vm, 0) ? "opened" : "not allowed");
+            p = strchr(p, ',');
+            if (p) p++;
+        }
+        const char *changed = ah_tick(vm);
+        if (changed) {   // the exe's ChangeMovie: a new root movie
+            printf("  [movie] %s at frame %d\n", changed, f);
+            start = (Movie *)vm->root->movie;
+        }
         double tg = as_time_ms();
         size_t heap0 = vm->heap_count;
         as_gc(vm);
@@ -665,11 +698,34 @@ static int as_mode(int argc, char **argv) {
             snprintf(buf, sizeof buf, "%s", getenv("AS_PRINT"));
             printf("  [trace %d]", f);
             for (char *t = strtok(buf, ","); t; t = strtok(NULL, ",")) {
-                int found;
-                AsVal v = as_resolve_path(vm, vm->root, t, &found);
+                int found = 0;   // @path: in the menu/pause overlay
+                AsVal v = t[0] != '@' ? as_resolve_path(vm, vm->root, t, &found)
+                        : vm->overlay ? as_resolve_path(vm, vm->overlay, t + 1, &found) : as_undef();
                 printf(" %s", found ? as_tostr(vm, v)->s : "-");
             }
             printf("\n");
+        }
+        if (getenv("AS_CHILDREN") && getenv("AS_TRACE_EVERY") && f % atoi(getenv("AS_TRACE_EVERY")) == 0) {
+            int found;   // AS_CHILDREN=path: the named clips in it
+            const char *cp = getenv("AS_CHILDREN");
+            AsMc *base = vm->root;
+            if (cp[0] == '@' && vm->overlay) { base = vm->overlay; cp++; }   // in the menu layer
+            AsVal v = *cp ? as_resolve_path(vm, base, cp, &found) : (found = 1, as_objv(&base->obj));
+            if (found && v.t == V_OBJ && v.o->type == OBJ_MC) {
+                AsMc *mc = (AsMc *)v.o;
+                printf("  [children %d]", f);
+                for (int i = 0; i < mc->ndisp; i++) {
+                    AsMc *k = mc->disp[i].mc;
+                    if (!k) { printf(" [cid %d]", mc->disp[i].cid); continue; }
+                    printf(" %s#%d@%.1f,%.1f%s", k->name ? k->name->s : "-", mc->disp[i].cid, k->m.tx / 20, k->m.ty / 20,
+                           k->visible ? "" : "(hidden)");
+                    if (getenv("AS_CHILDREN_CX"))
+                        printf("[a%.0f cx %.2f,%.2f,%.2f,%.2f+%.0f,%.0f,%.0f,%.0f clip %d n%d]", k->alpha, k->cx.mul[0], k->cx.mul[1],
+                               k->cx.mul[2], k->cx.mul[3], k->cx.add[0], k->cx.add[1], k->cx.add[2], k->cx.add[3], mc->disp[i].clip,
+                               k->ndisp);
+                }
+                printf("\n");
+            }
         }
         if (prof_from >= 0) {
             prof_ms += ms;
@@ -708,9 +764,12 @@ static int as_mode(int argc, char **argv) {
                     if (v.t == V_OBJ && v.o->type == OBJ_MC) ((AsMc *)v.o)->visible = 0;
                 }
             }
-            clear(start->bg);
+            clear(ah_loading ? ah_loading->movie->bg : vm->root->movie->bg);   // as the Vita does
             render_begin(&vb);
-            as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (ah_loading) as_render_mc(ah_loading, screen, CX_IDENTITY, &vb);   // the loading screen
+            else as_render_mc(vm->root, screen, CX_IDENTITY, &vb);
+            if (ah_unlock_layer && !ah_loading) as_render_mc(ah_unlock_layer, screen, CX_IDENTITY, &vb);   // unlock banners
+            if (vm->overlay && !ah_loading) as_render_mc(vm->overlay, screen, CX_IDENTITY, &vb);   // menu/pause layer
             if (vb.heat_at >= 0)   // the Vita draws a heat shimmer behind this
                 printf("  [heat] items 0..%d shimmer in %.0f,%.0f - %.0f,%.0f\n", vb.heat_at, vb.heat[0], vb.heat[1],
                        vb.heat[2], vb.heat[3]);
@@ -786,13 +845,40 @@ static int as_mode(int argc, char **argv) {
         printf("\nprofile (from frame %s):\n", getenv("AS_PROF"));
         as_prof_report(40, line);
     }
+    if (getenv("AH_SAVE")) printf("save: %d\n", ah_save_tick());
     printf("\n%d loadMovie calls, %d files parsed\n", load_count, nmovie_cache);
     printf("\n%d distinct warnings:\n", nwarn);
     for (int i = 0; i < nwarn; i++) printf("  %6d x %s\n", warn_count[i], warn_text[i]);
     return 0;
 }
 
+// One root frame on the 960x544 Vita screen, framed the way src/ah_viewer.c frames it:
+// --root file.pak frame out_prefix [zoom] [pan_x] [pan_y]
+static int root_mode(int argc, char **argv) {
+    if (argc < 5) { fprintf(stderr, "usage: %s --root file frame out_prefix [zoom] [pan_x] [pan_y]\n", argv[0]); return 1; }
+    char err[256];
+    Movie *m = swf_load(argv[2], err, sizeof err);
+    if (!m) { fprintf(stderr, "%s\n", err); return 1; }
+    int f = atoi(argv[3]);
+    if (f < 0 || f >= m->root.nframes) { fprintf(stderr, "frame %d of %d\n", f, m->root.nframes); return 1; }
+    W = MAX_W; H = MAX_H;
+    float zoom = argc > 5 ? (float)atof(argv[5]) : 0;
+    float px = argc > 6 ? (float)atof(argv[6]) : 0, py = argc > 7 ? (float)atof(argv[7]) : 0;
+    Mat root = ah_view_matrix(m, zoom, px, py);
+    static const uint8_t paper[3] = {237, 237, 224};
+    clear(paper);
+    DrawList vb = {0};
+    render_begin(&vb);
+    render_display_list(m, &m->root.frames[f], root, CX_IDENTITY, 0, &vb);
+    rasterise(&vb);
+    write_frame(argv[4], 0);
+    printf("stage %dx%d, %d frames, %d labels, %d triangles\n", m->stage_w, m->stage_h, m->root.nframes,
+           m->root.nlabels, render_stats.triangles);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc > 1 && !strcmp(argv[1], "--root")) return root_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--as")) return as_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--dress")) return dress_mode(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--sprite")) return sprite_mode(argc, argv);

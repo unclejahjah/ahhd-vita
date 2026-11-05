@@ -1,12 +1,52 @@
-# cc-vita
+# ahhd-vita
 
-This is the start of a native Castle Crashers port for the PS Vita. Right now it's a renderer test: it plays any animation from PLAYER.swf on the GPU.
+A native PS Vita port of Alien Hominid HD. It runs the game's own Flash content and ActionScript from your copy of the game on a PS Vita, at 60 fps.
 
-No game data is included, and none may ever be committed (see `.gitignore`). At runtime the app reads the SWF files from your own copy of the game, so running or testing needs those files from the PC install.
+**No game data is included, and none may ever be committed (see `.gitignore`).** You need your own copy of Alien Hominid HD. The app reads the data files from it at runtime.
 
-Repo layout: `src/` engine, `tools/` desktop host test and analysis scripts, `HANDOFF.md` current state, `docs/research/` research notes, `prototypes/` older cloud-built pieces (already merged or superseded).
+## Install
 
-## Build (VitaSDK)
+1. Get `ahhd_vita.vpk`: from this repository's releases, from the "Vita build" workflow's `ahhd-vita-vpk` artifact on GitHub Actions, or by building it yourself (see below).
+2. Install the VPK with VitaShell.
+3. Copy these folders from your install's `data` folder to `ux0:data/AlienHominidHD/` on the Vita, so that `ux0:data/AlienHominidHD/game/alien.pak` exists:
+
+| Folder | Needed for | Size |
+| --- | --- | --- |
+| `game`, `levels` | The game itself | About 25 MB |
+| `fonts`, `loc` | All text | Small |
+| `sounds` | Sound effects | 5 MB |
+| `music` | Music | 134 MB |
+
+The game runs silent without `sounds` and `music`.
+
+## Controls
+
+| Button | Action |
+| --- | --- |
+| D-pad or left stick | Move, menu selection |
+| Cross | Jump, accept |
+| Square | Shoot |
+| Circle | Grenade, back |
+| Triangle | Interact |
+| L, R | Roll |
+| Start | Pause in a level |
+| Select | Use a coin to continue |
+| Cross or Start | Skip the intro screens |
+| Select + Start | Quit |
+| Select + Up | Debug overlay |
+
+## Saves
+
+Progress, unlocks, options and volumes are kept in `ux0:data/AlienHominidHD/save.dat`. Back this file up before deleting the app's bubble.
+
+## Not working
+
+- Online play and leaderboards.
+- All You Can Eat multiplayer.
+
+## Building
+
+With [VitaSDK](https://vitasdk.org) installed and `VITASDK` set:
 
 ```
 mkdir build && cd build
@@ -14,42 +54,61 @@ cmake ..
 make
 ```
 
-This produces `cc_vita.vpk`. Install it with VitaShell, then copy your `game/PLAYER.swf` to `ux0:data/CastleCrashers/PLAYER.swf` and your `levels/*.swf` to `ux0:data/CastleCrashers/levels/`.
+This builds the full game, `ahhd_vita.vpk`.
 
-The app has two modes; SELECT+TRIANGLE switches between them.
-- Level mode (the default): the stick or D-pad walks the knight. SQUARE is a light attack that chains into the 4-hit combo, TRIANGLE is a heavy attack, CROSS jumps (SQUARE in the air jump-kicks), and R blocks. SELECT+Left/Right changes level, and SELECT+Down shows the collision edges.
-- Animation viewer: Left/Right changes animation, and L/R zooms.
+### LiveArea art
 
-In both modes SELECT+Up toggles the 60 fps cap (vblank wait) and START quits.
+The bubble and LiveArea art are made from the game's art, so they stay out of the repository. A build without them gets the default LiveArea. To use your own, put these PNG files in the gitignored `sce_sys` folder before running `cmake`:
 
-Combos follow `f_PunchSet1` (X) and `f_PunchSet2` (Y) in MAIN.swf. Each press picks the next move from the current `punch_group`/`punch_num`: XXXX, Y/YY/YYY, XY uppercut (level 8), XXY (16), XXYY (32), dash+X/Y (4), and in the air X slashes, Y slams down, and X then Y does an uppercut. `combo_unlocks[i]` needs character level 1, 2, 4, 8, 16, 32 or 50. Players have no jump kick; that clip only appears in `f_JumpKickInit`, which isn't on the player's attack path.
+| File | Size |
+| --- | --- |
+| `sce_sys/icon0.png` | 128x128, 8-bit indexed |
+| `sce_sys/livearea/contents/bg.png` | 840x500, 8-bit indexed |
+| `sce_sys/livearea/contents/startup.png` | 420x143, transparent |
 
-Enemies (`src/enemy.c`) are the player rig with different parts, as in the game. The body holds four unnamed part clips, stopped on frame 0, that the game switches with `gotoAndStop`: weapons (112 frames), heads (59), arms (32) and torsos (31). Frame k of the head, arm and torso clips is character k (5 grey knight, 6 barbarian, 7 thief). `Actor.part_cid/part_frame` pins those clips per character. A player swing hits once per enemy, from frame 2 until its fin frame, within 75 px in front and 22 px in depth. Light hits stagger, heavy hits knock back, the uppercut launches, air hits juggle, and slams or a defeat knock the enemy down. Enemies line up beside the knight and swing (`punch1_1`), which hits at its fin frame unless he blocks facing them. Waves of 3 spawn ahead of the knight.
+`sce_sys/livearea/contents/template.xml` is in the repository and places the launch button.
 
-`src/player.c` holds the knight's state machine (idle, walk, attack, jump, land, block). Each animation is a root label whose `body` clip plays it. The clip's stop() frame ends the animation, and its `fin` label is the first frame from which the next light hit may start; a press before that is queued. Jumps use the game's player values: `speed_launch` −20 px/frame and `gravity` 2 at 30 frames a second. Like the game, only the `body` child is lifted by `body_y`, so the shadow stays on the ground. `Actor.body_frame` can pin the body clip to one frame (the jump kick's "kick" frame), as `gotoAndStop` does. The stats line updates once a second and shows that second's average and peak build time and peak triangle count.
+### Animation viewer
 
-## Levels
-`src/level.c` draws a level's parallax layers (`bg3_c`, `bg2_c`, `bg1_c`, `game`, `bg0_c`) using the camera rules from the game's `f_UpdateCamera` in MAIN.swf. Each container sits at (424, 480) on the 848×480 stage and is scaled around that point. Its child scrolls by camera × factor: 0.1, 0.25, 0.5 and 1.0 for the play layer, and 1.5 for the foreground. The vertical camera is offset by −100. The knight spawns at `p1_start`, and the camera stops at `edge_left`/`edge_right`. Editor markers that the game's scripts would hide (doorN portals, spawn points, waypoints, cutscene "guide" cameras, `invisObject`s) are removed from the play layer. Shapes entirely off screen are culled.
+`cmake -DAH_VIEWER=ON ..` builds `src/ah_viewer.c`, a viewer for the game's movies, in place of the game. It needs only `game` and `levels`.
 
-Collision works the way the game's engine does it. One frame of the play layer, the one the level script steps to before `f_BSPLoadLevel`, holds edge clips. Each edge clip has children named `bsp1` at (0,0) and `bsp2` at (64,0), and a one-line script `n_type = N` that sets its type: 1–4 for walls, 100/101 for stairs, 300 for ladders, and 400 for death boxes, going by the MAIN.swf functions that use each type. `level_hit_test` matches `f_BSPHitTest`: it returns the fraction of a move before the first edge, or 0 for no hit. `level_move` moves horizontally and then vertically, each time stopping 0.001 short of the hit, like `f_MoveCharH/V`, so characters slide along walls. Stairs follow the game's ground-type state machine. A character in plain mode that crosses a 100/101 edge, sideways (`f_PlainMCH`) or up/down (`f_PlainMCV`), passes through and switches to stairs mode. In stairs mode (`f_StairsMCH`, `f_InsideMCV`), moves are free until they cross any edge, which passes through and switches back to plain mode. Sideways moves on the stairs also lift the drawn body (`body_y`) along the stair line below the feet. Depth sorting still uses the feet. Every other edge type blocks for now. A few levels (8, 14, 19, 27, 39) have no edges. In the level viewer, SQUARE draws the edges. Custom tag 148 isn't collision; it's a 64×64 texture (`PIXL`) that follows a bitmap tag.
+Controls: Up/Down picks the movie, Left/Right the animation (or the root frame when a movie has no labels), L/R zooms, the left stick pans, Cross resets the view, Select+Up toggles the 60 fps cap, and Start quits.
 
-Draw order follows the game's `f_Depth`. Characters, and play-layer clips whose first-frame script calls `f_AddNeutral(this)` or `f_AddObject(this)`, are moved to depths around 1,000,000 ordered by y. `f_Depth(this, N)` sorts a clip as if it stood at y = N. Everything else keeps its timeline depth, which is far lower. The parser spots these calls by decoding the Push and ConstantPool actions in each clip's first frame. `level_render` then draws the static play-layer art first, followed by the sorted objects and the actors merged by y.
+Levels only show what their timeline places in the viewer, because most of a level is built by its scripts.
 
-Not handled yet: the sky (`SKY*.swf` uses bitmaps), and the special edge types (stairs, ladders, death boxes).
+## How it works
 
-## Layout
-- `src/swf.c` is the SWF parser, a C port of `code/swfproto/swf.py`. It reads shapes, sprites, timelines and `stop()` scripts.
-- `src/render.c` handles rendering. It tessellates each shape once, using libtess2 with the even-odd rule, and caches the result. Each frame it flattens the display list into a single triangle list, applying transforms and colour transforms on the CPU. That list goes to the GPU in one `vita2d_draw_array` call.
-- `src/main.c` is the Vita app.
-- `tools/hosttest.c` is a desktop build of the same parser and renderer. It software-rasterises frames to PPM so you can check output without a Vita:
-  `gcc -O2 -Ithird_party/libtess2/Include -o hosttest tools/hosttest.c src/swf.c src/render.c third_party/libtess2/Source/*.c -lm`
-- `third_party/libtess2` is vendored from memononen/libtess2 (SGI Free Software License B). See `VERSION` for the commit.
+The engine comes from [cc-vita](https://github.com/unclejahjah/cc-vita). Alien Hominid HD's game data is Flash content in a thin wrapper:
 
-Masks (clip layers) use the stencil buffer. Each mask is drawn with alpha 0 to increment the stencil, the masked content draws where the stencil equals the nesting level, and the same mask triangles then decrement it again. `render.c` records this as a short list of draw commands alongside the vertex buffer. `hosttest` applies the same rules in software.
+- `data/game/*.pak` and `data/levels/*.pak` are ZIP archives, each holding one uncompressed record, `NAME.COK6.BREC` (or `PDAn.PDAG.BREC` for the PDA minigames).
+- A BREC record is a 160-byte header followed by a plain uncompressed SWF (version 6). The header holds the SWF's offset (u64 at 0x20, 0xa0 in every file seen) and size (u64 at 0x28).
+- The SWF holds the vector shapes, sprites, timelines and the game's ActionScript 1 scripts, with the same custom opcodes (0x70, 0xA0 to 0xA4) cc-vita's interpreter already handles.
 
-`sce_gap.ld` works around a VitaSDK quirk: `vita-elf-create` fails with "segment 1 overlaps" when the code happens to end just below a 64 KB boundary.
+`swf_load()` unwraps the ZIP and BREC layers itself (`brec_unwrap()` in `src/swf.c`), so every tool and the app can be pointed straight at a `.pak` file.
 
-## Not done yet
-- Gradients are evaluated per vertex, so large gradients can look banded.
-- No bitmap fills (PLAYER.swf has none).
-- Nested sprites advance on one global tick. The game engine drives some of them explicitly.
+Other data:
+
+| Path | Format |
+| --- | --- |
+| `data/baf/*.baf` | Behemoth "BAF!" vector animation files, one per movie. Not used; what they add over the shapes in the SWF is unknown. |
+| `data/music`, `data/sounds` `*.adpcm` | RIFF WAV, Microsoft ADPCM |
+| `data/loc/*.dct` | String tables (key, text), 12 languages |
+| `data/fonts` | BMFont binary `.fnt` plus PNG pages |
+| `data/shaders` | Direct3D 9 shader bytecode. Not used. |
+
+## Desktop harness
+
+`tools/hosttest.c` builds the parser and renderer for Linux or WSL and writes frames as PPM images:
+
+```
+gcc -O2 -Ithird_party/libtess2/Include -o hosttest tools/hosttest.c \
+  src/ah_host.c src/ah_view.c src/swf.c src/render.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c \
+  src/cc_host.c src/cc_native.c src/hostfont.c src/strtab.c src/cc_buttons.c \
+  src/level.c src/player.c src/enemy.c third_party/libtess2/Source/*.c -lm -lz
+
+./hosttest "<install>/data/game/alien.pak" walk out/walk 8
+```
+
+`--root file.pak frame out [zoom] [pan_x] [pan_y]` draws one root frame on a 960x544 screen, framed as the Vita viewer frames it.
+
+The second argument of the default mode is a root frame label. ALIEN has 72, including `stand`, `walk`, `jump`, `roll`, `shoot_stand`, `shoot_up`, `slash`, `dig`, `flip`, `beam` and the `die_*` set.
