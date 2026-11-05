@@ -24,6 +24,7 @@
 #include "as.h"
 #include "as_render.h"
 #include "ah_host.h"
+#include "ah_online.h"
 #include "audio.h"
 #include "cc_host.h"
 #include "hostfont.h"
@@ -509,6 +510,7 @@ int main(void) {
     ah_audio_volumes = audio_set_volumes;
     ah_sfx_stop_all = stop_all_sfx;
     ah_sfx_hold = audio_sfx_hold;
+    ah_online_init(DATA_DIR);   // the online leaderboard, when this build has a server
     ah_save_load(DATA_DIR "save.dat");   // unlocks, Load Level, options and volumes
     as_render_init(vm);
     if (!ah_start(vm, "legal.pak")) {

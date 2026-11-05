@@ -18,15 +18,15 @@ npx wrangler deploy                          # prints the Worker's URL
 Build the VPK with the same key and the Worker's URL:
 
 ```
-cmake -DAH_LB_URL=https://ahhd-scores.<you>.workers.dev -DAH_LB_KEY=<SCORE_KEY> ..
+cmake -DAH_LB_URL=http://ahhd-scores.<you>.workers.dev -DAH_LB_KEY=<SCORE_KEY> ..
 ```
 
-A build without them has no online leaderboards.
+A build without them has no online leaderboards. The URL is plain `http://`: the Vita's HTTPS doesn't accept the certificate the Worker serves, which is why each score is signed instead.
 
 ## Removing a score
 
 ```
-curl -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" "https://ahhd-scores.<you>.workers.dev/delete?name=<name>"
+curl -X POST -H "Authorization: Bearer <ADMIN_TOKEN>" "http://ahhd-scores.<you>.workers.dev/delete?name=<name>"
 ```
 
 This removes every score sent under that name.

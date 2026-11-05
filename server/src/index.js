@@ -49,7 +49,8 @@ async function hmacHex(key, msg) {
 async function postScore(req, env) {
   const f = new URLSearchParams(await req.text());
   const player = f.get("player") || "";
-  const name = cleanName(f.get("name"));
+  const rawName = f.get("name") || "";
+  const name = cleanName(rawName);
   const difficulty = Number(f.get("difficulty"));
   const score = Number(f.get("score"));
   const time = Number(f.get("time"));
@@ -59,7 +60,7 @@ async function postScore(req, env) {
   if (!Number.isInteger(score) || score <= 0 || score > Number(env.MAX_SCORE || 20000000)) return text("bad score", 400);
   // a queued score may arrive days late; anything older than 30 days or from the future is refused
   if (!Number.isInteger(time) || time > now + 600 || time < now - 30 * 86400) return text("bad time", 400);
-  const want = await hmacHex(env.SCORE_KEY || "", `${player}|${name}|${difficulty}|${score}|${time}`);
+  const want = await hmacHex(env.SCORE_KEY || "", `${player}|${rawName}|${difficulty}|${score}|${time}`);
   if (want !== (f.get("sig") || "")) return text("bad signature", 403);
 
   // one score every 10 seconds per player

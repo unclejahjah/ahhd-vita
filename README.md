@@ -82,9 +82,17 @@ Tap the bubble. If a data file is missing, the app shows which one and where it 
 
 Progress, unlocks, options and volumes are kept in `ux0:data/AlienHominidHD/save.dat`. Back this file up before deleting the app's bubble.
 
+## Online leaderboards
+
+Builds made with a score server (see [server/README.md](server/README.md)) send the score of each finished main-game level to a public board, under your Vita account name. **Leaderboards** in the main menu shows the week, month and all-time boards for each difficulty. With no Wi-Fi, scores wait in `lb_pending.txt` and are sent next time.
+
+What is sent: a random player ID made on your Vita (`player_id.txt`), your Vita account name (first 16 characters), the difficulty, the score and the time. To stay off the board, put an empty file named `offline` in `ux0:data/AlienHominidHD/`.
+
+Challenge scores stay on the Vita. Builds without a server, like the GitHub Actions one, have no online leaderboards.
+
 ## Not working
 
-- Online play and leaderboards.
+- Online play.
 - All You Can Eat multiplayer.
 
 ## Building
