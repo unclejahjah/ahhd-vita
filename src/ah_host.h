@@ -36,6 +36,10 @@ extern void (*ah_music_pause)(int paused);
 extern void (*ah_audio_volumes)(float music, float sfx);
 extern void (*ah_sfx_stop_all)(void);
 extern void (*ah_sfx_hold)(int hold);   // freeze (1) or resume (0) the sounds playing now
+// optional: start reading these files (names without .pak) in the background, and how many
+// are still being read; the loading screen waits for them, playing, before the level loads
+extern void (*ah_prefetch)(const char *const *files, int n);
+extern int (*ah_prefetch_pending)(void);
 extern void (*ah_log)(const char *line);   // optional: where logged calls go
 
 #endif
