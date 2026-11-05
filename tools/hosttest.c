@@ -541,6 +541,31 @@ static void host_sound(AsVm *vm, const char *linkage, float vol, float pan, int 
 
 static void host_ah_log(const char *line) { printf("  [host] %s\n", line); }
 
+// AH_LB=1: a made-up online leaderboard (the Vita's comes from the score server)
+static AhLbRow fake_rows[12];
+static int fake_n, fake_wait;
+static const char *fake_name(void) { return "VitaPlayer"; }
+static int fake_online(void) { return 1; }
+static void fake_submit(const char *board, int difficulty, double score) {
+    printf("  [lb] submit %s difficulty %d score %.0f\n", board, difficulty, score);
+}
+static void fake_request(const char *board, int difficulty, int timeframe, int around_me) {
+    printf("  [lb] request %s difficulty %d timeframe %d%s\n", board, difficulty, timeframe, around_me ? " around me" : "");
+    static const char *names[] = {"Zorp", "Mia", "Krang", "VitaPlayer", "Ana", "Bo", "Cy", "Dee", "Eli", "Fay"};
+    fake_n = 10;
+    for (int i = 0; i < fake_n; i++) {
+        fake_rows[i].rank = i + 1;
+        snprintf(fake_rows[i].name, sizeof fake_rows[i].name, "%s", names[i]);
+        fake_rows[i].score = 500000 - i * 37000;
+    }
+    fake_wait = 20;   // "retrieving" for a moment
+}
+static int fake_poll(const AhLbRow **rows, int *nrows, int *me) {
+    if (fake_wait > 0) { fake_wait--; return 0; }
+    *rows = fake_rows, *nrows = fake_n, *me = 3;
+    return 1;
+}
+
 static int as_mode(int argc, char **argv) {
     if (argc < 5) { fprintf(stderr, "usage: %s --as GAME_DIR START.swf out_prefix [frames] [snap_every]\n", argv[0]); return 1; }
     snprintf(game_dir, sizeof game_dir, "%s", argv[2]);
@@ -583,6 +608,10 @@ static int as_mode(int argc, char **argv) {
         } else {
             printf("font: %s\n", err);
         }
+    }
+    if (getenv("AH_LB")) {
+        ah_lb_player_name = fake_name, ah_lb_online = fake_online, ah_lb_submit = fake_submit;
+        ah_lb_request = fake_request, ah_lb_poll = fake_poll;
     }
     if (getenv("AH_SAVE")) ah_save_load(getenv("AH_SAVE"));   // AH_SAVE=file: load it first, write it at the end
     if (!ah_start(vm, argv[3])) return 1;
