@@ -542,8 +542,43 @@ static void end_loading(AsVm *vm) {
     as_set(vm, as_objv(vm->global), as_atom(vm, "__ah_loading"), as_undef());
 }
 
+// The legal screens at startup (legal.pak): the exe made you sit through them. Accept or
+// Start jumps the clip that runs them (the one long timeline, 390 frames) to its last
+// frame, whose script loads the title as usual.
+static AsMc *longest_clip(AsMc *mc, int depth) {
+    AsMc *best = mc->def && mc->def->nframes >= 300 ? mc : NULL;
+    for (int i = 0; i < mc->ndisp && !best && depth < 4; i++)
+        if (mc->disp[i].kind == DISP_MC && mc->disp[i].mc) best = longest_clip(mc->disp[i].mc, depth + 1);
+    return best;
+}
+
+static void skip_legal(AsVm *vm) {
+    static int was_down = 1;   // a button held at boot doesn't count
+    int down = cc_keys[97] || cc_keys[49];
+    if (down && !was_down && strncasecmp(root_file, "legal", 5) == 0) {
+        AsMc *c = longest_clip(vm->root, 0);
+        if (c && c->frame < c->def->nframes - 1) {
+            if (ah_log) ah_log("legal screens skipped");
+            as_mc_goto(vm, c, c->def->nframes - 1, 1);
+        }
+    }
+    was_down = down;
+}
+
+// the menu layer (pause.pak) a script asked for with TurnMainMenuOn or the pause button
+static void open_requested_overlay(AsVm *vm) {
+    if (!overlay_open) return;
+    overlay_open = overlay_close = 0;
+    Movie *o = vm->loader(vm, "pause.pak");
+    vm->overlay = o ? as_mc_new(vm, o, &o->root, NULL, 0) : NULL;
+    if (!o) ah_paused = 0;
+    if (vm->overlay && ah_paused)
+        as_set(vm, as_objv(&vm->overlay->obj), as_atom(vm, "currentgamex"), as_strv(as_str(vm, current_gamex())));
+}
+
 const char *ah_tick(AsVm *vm) {
     static char changed[64];
+    skip_legal(vm);
     if (ah_loading) {   // only the loading screen runs
         run_as_root(vm, &ah_loading, 0);
         loading_frames++;
@@ -567,14 +602,7 @@ const char *ah_tick(AsVm *vm) {
         as_tick(vm);
         run_unlocks(vm);
     }
-    if (overlay_open) {
-        overlay_open = overlay_close = 0;
-        Movie *o = vm->loader(vm, "pause.pak");
-        vm->overlay = o ? as_mc_new(vm, o, &o->root, NULL, 0) : NULL;
-        if (!o) ah_paused = 0;
-        if (vm->overlay && ah_paused)
-            as_set(vm, as_objv(&vm->overlay->obj), as_atom(vm, "currentgamex"), as_strv(as_str(vm, current_gamex())));
-    }
+    open_requested_overlay(vm);
     if (vm->overlay) run_as_root(vm, &vm->overlay, !ah_paused);   // the overlay runs as its own _root
     if (overlay_close) {
         overlay_close = 0;
@@ -598,7 +626,13 @@ const char *ah_tick(AsVm *vm) {
         if (ah_sfx_stop_all) ah_sfx_stop_all();
         return NULL;
     }
-    return change_root(vm, changed) ? changed : NULL;
+    if (!change_root(vm, changed)) return NULL;
+    // a new root has drawn nothing until its first frame runs, and the stage colour (the
+    // menu's green) would show for a frame: run that frame now, before it's presented
+    as_tick(vm);
+    open_requested_overlay(vm);   // the main menu's PDA, which that frame turns on
+    if (vm->overlay) run_as_root(vm, &vm->overlay, 1);
+    return changed;
 }
 
 // ChangeMovie("attract.cok6"): the exe swaps the root movie for another file. The front end

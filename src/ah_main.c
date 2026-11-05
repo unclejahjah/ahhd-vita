@@ -605,6 +605,17 @@ int main(void) {
             build_ms += (sceKernelGetProcessTimeWide() - t0) / 1000.0f;
         }
 
+        // a frame with nothing on it between two movies (the title clears itself the tick
+        // before it loads the menu) would flash the stage colour: keep the last picture up
+        // instead, for a few frames (about 100 ms) at most
+        static int presented, held;
+        if (presented && vb.n == 0 && !overlay && held < 6) {
+            held++;
+            sceKernelDelayThread(16667);   // what waiting for the swap would have taken
+            continue;
+        }
+        held = 0;
+        presented = 1;
         const Movie *shown = ah_loading ? ah_loading->movie : root;
         vita2d_set_clear_color(RGBA8(shown->bg[0], shown->bg[1], shown->bg[2], 255));
         draw_frame(&vb, heat_clock++);
