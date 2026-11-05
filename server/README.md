@@ -10,9 +10,9 @@ With [wrangler](https://developers.cloudflare.com/workers/wrangler/) logged in t
 cd server
 npx wrangler d1 create ahhd-scores          # paste the database_id it prints into wrangler.toml
 npx wrangler d1 execute ahhd-scores --remote --file schema.sql
+npx wrangler deploy                          # prints the Worker's URL
 npx wrangler secret put SCORE_KEY           # any long random string; the VPK needs the same one
 npx wrangler secret put ADMIN_TOKEN         # another long random string, for removing scores
-npx wrangler deploy                          # prints the Worker's URL
 ```
 
 Build the VPK with the same key and the Worker's URL:

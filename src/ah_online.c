@@ -48,7 +48,7 @@ static int g_enabled;
 static SceUID g_lock = -1, g_wake = -1;
 // what the game asked for (main thread) and what came back (network thread), under g_lock
 static struct { char board[16]; int difficulty, score; unsigned time; } g_pending[MAX_PENDING];
-static int g_npending, g_pending_dirty;
+static int g_npending;
 static int g_req_wanted, g_req_difficulty, g_req_timeframe;
 static int g_req_state;   // 0 none, 1 asked, 2 done, -1 failed
 static AhLbRow g_rows[MAX_ROWS], g_shown[MAX_ROWS];
@@ -234,7 +234,7 @@ static void url_encode(const char *s, char *out, size_t size) {
 // 1 sent (or refused for good), 0 try again later
 static int send_score(const char *board, int difficulty, int score, unsigned time) {
     (void)board;   // only "ahhd" is queued
-    char msg[160], sig[65], name[128], body[512], reply[64];
+    char msg[320], sig[65], name[640], body[1024], reply[64];
     snprintf(msg, sizeof msg, "%s|%s|%d|%d|%u", g_player, g_name, difficulty, score, time);
     hmac_hex(AH_LB_KEY, msg, sig);
     url_encode(g_name, name, sizeof name);
