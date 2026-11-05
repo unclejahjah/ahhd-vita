@@ -1,12 +1,84 @@
 # ahhd-vita
 
-A native PS Vita port of Alien Hominid HD, built on the engine from [cc-vita](https://github.com/unclejahjah/cc-vita) (the Castle Crashers port).
+A native PS Vita port of Alien Hominid HD. It runs the game's own Flash content and ActionScript from your copy of the game on a PS Vita, at 60 fps.
 
-No game data is included, and none may ever be committed (see `.gitignore`). The app reads the data files from your own copy of the game at runtime.
+**No game data is included, and none may ever be committed (see `.gitignore`).** You need your own copy of Alien Hominid HD. The app reads the data files from it at runtime.
 
-## Why cc-vita's engine fits
+## Install
 
-Alien Hominid HD's game data is Flash content in a thin wrapper:
+1. Get `ahhd_vita.vpk`: from this repository's releases, from the "Vita build" workflow's `ahhd-vita-vpk` artifact on GitHub Actions, or by building it yourself (see below).
+2. Install the VPK with VitaShell.
+3. Copy these folders from your install's `data` folder to `ux0:data/AlienHominidHD/` on the Vita, so that `ux0:data/AlienHominidHD/game/alien.pak` exists:
+
+| Folder | Needed for | Size |
+| --- | --- | --- |
+| `game`, `levels` | The game itself | About 25 MB |
+| `fonts`, `loc` | All text | Small |
+| `sounds` | Sound effects | 5 MB |
+| `music` | Music | 134 MB |
+
+The game runs silent without `sounds` and `music`.
+
+## Controls
+
+| Button | Action |
+| --- | --- |
+| D-pad or left stick | Move, menu selection |
+| Cross | Jump, accept |
+| Square | Shoot |
+| Circle | Grenade, back |
+| Triangle | Interact |
+| L, R | Roll |
+| Start | Pause in a level |
+| Select | Use a coin to continue |
+| Cross or Start | Skip the intro screens |
+| Select + Start | Quit |
+| Select + Up | Debug overlay |
+
+## Saves
+
+Progress, unlocks, options and volumes are kept in `ux0:data/AlienHominidHD/save.dat`. Back this file up before deleting the app's bubble.
+
+## Not working
+
+- Online play and leaderboards.
+- All You Can Eat multiplayer.
+
+## Building
+
+With [VitaSDK](https://vitasdk.org) installed and `VITASDK` set:
+
+```
+mkdir build && cd build
+cmake ..
+make
+```
+
+This builds the full game, `ahhd_vita.vpk`.
+
+### LiveArea art
+
+The bubble and LiveArea art are made from the game's art, so they stay out of the repository. A build without them gets the default LiveArea. To use your own, put these PNG files in the gitignored `sce_sys` folder before running `cmake`:
+
+| File | Size |
+| --- | --- |
+| `sce_sys/icon0.png` | 128x128, 8-bit indexed |
+| `sce_sys/livearea/contents/bg.png` | 840x500, 8-bit indexed |
+| `sce_sys/livearea/contents/startup.png` | 420x143, transparent |
+
+`sce_sys/livearea/contents/template.xml` is in the repository and places the launch button.
+
+### Animation viewer
+
+`cmake -DAH_VIEWER=ON ..` builds `src/ah_viewer.c`, a viewer for the game's movies, in place of the game. It needs only `game` and `levels`.
+
+Controls: Up/Down picks the movie, Left/Right the animation (or the root frame when a movie has no labels), L/R zooms, the left stick pans, Cross resets the view, Select+Up toggles the 60 fps cap, and Start quits.
+
+Levels only show what their timeline places in the viewer, because most of a level is built by its scripts.
+
+## How it works
+
+The engine comes from [cc-vita](https://github.com/unclejahjah/cc-vita). Alien Hominid HD's game data is Flash content in a thin wrapper:
 
 - `data/game/*.pak` and `data/levels/*.pak` are ZIP archives, each holding one uncompressed record, `NAME.COK6.BREC` (or `PDAn.PDAG.BREC` for the PDA minigames).
 - A BREC record is a 160-byte header followed by a plain uncompressed SWF (version 6). The header holds the SWF's offset (u64 at 0x20, 0xa0 in every file seen) and size (u64 at 0x28).
@@ -14,15 +86,15 @@ Alien Hominid HD's game data is Flash content in a thin wrapper:
 
 `swf_load()` unwraps the ZIP and BREC layers itself (`brec_unwrap()` in `src/swf.c`), so every tool and the app can be pointed straight at a `.pak` file.
 
-Other data, not used yet:
+Other data:
 
 | Path | Format |
 | --- | --- |
-| `data/baf/*.baf` | Behemoth "BAF!" vector animation files, one per movie. What they add over the shapes in the SWF is still unknown. |
+| `data/baf/*.baf` | Behemoth "BAF!" vector animation files, one per movie. Not used; what they add over the shapes in the SWF is unknown. |
 | `data/music`, `data/sounds` `*.adpcm` | RIFF WAV, Microsoft ADPCM |
 | `data/loc/*.dct` | String tables (key, text), 12 languages |
 | `data/fonts` | BMFont binary `.fnt` plus PNG pages |
-| `data/shaders` | Direct3D 9 shader bytecode (to be rewritten for the Vita) |
+| `data/shaders` | Direct3D 9 shader bytecode. Not used. |
 
 ## Desktop harness
 
@@ -40,21 +112,3 @@ gcc -O2 -Ithird_party/libtess2/Include -o hosttest tools/hosttest.c \
 `--root file.pak frame out [zoom] [pan_x] [pan_y]` draws one root frame on a 960x544 screen, framed as the Vita viewer frames it.
 
 The second argument of the default mode is a root frame label. ALIEN has 72, including `stand`, `walk`, `jump`, `roll`, `shoot_stand`, `shoot_up`, `slash`, `dig`, `flip`, `beam` and the `die_*` set.
-
-## Vita animation viewer
-
-The default Vita build (`src/ah_viewer.c`) is an animation viewer for the game's movies.
-
-1. Get `ahhd_vita.vpk`: from the "Vita build" workflow's `ahhd-vita-vpk` artifact on GitHub Actions, or build it yourself with VitaSDK:
-   ```
-   mkdir build && cd build
-   cmake ..
-   make
-   ```
-2. Install the VPK with VitaShell.
-3. Copy the `game` and `levels` folders from your install's `data` folder to `ux0:data/AlienHominidHD/`, so that `ux0:data/AlienHominidHD/game/alien.pak` exists. About 25 MB.
-   For text copy `fonts` and `loc` too, and for sound copy `sounds` (5 MB) and `music` (134 MB). The game runs silent without them.
-
-Controls: Up/Down picks the movie, Left/Right the animation (or the root frame when a movie has no labels), L/R zooms, the left stick pans, CROSS resets the view, SELECT+Up toggles the 60 fps cap, and START quits.
-
-Levels only show what their timeline places. Most of a level is built by its scripts, which need the ActionScript front end (`-DAH_VIEWER=OFF`, still cc-vita's Castle Crashers one; see `HANDOFF.md`).
