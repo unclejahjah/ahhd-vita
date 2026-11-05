@@ -768,7 +768,13 @@ static const Patch patches[] = {
      {0x96, 0x0e, 0x00, 0x04, 0x02, 0x09, 0x8f, 0x01, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0x4f},
      {0x96, 0x0d, 0x00, 0x04, 0x02, 0x07, 0x01, 0x00, 0x00, 0x00, 0x00, 'a', 'h', 'T', 'F', 0x00, 0x3d, 0x17},
      "lifetime timeframe"},
-    // f_UPDATELBTIMEFRAME_LM: three choices (index up to 2), not two
+#define TIMEFRAMES(at, reg) {"pause.pak", at, 18, \
+     {0x96, 0x0e, 0x00, 0x04, reg, 0x09, 0x8f, 0x01, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0x4f}, \
+     {0x96, 0x0d, 0x00, 0x04, reg, 0x07, 0x01, 0x00, 0x00, 0x00, 0x00, 'a', 'h', 'T', 'F', 0x00, 0x3d, 0x17}, \
+     "lifetime timeframe"}
+    TIMEFRAMES(0x4719a, 0x02),   // f_BuildPDALeaderboardSelectMenu
+    TIMEFRAMES(0x47386, 0x03),   // f_BuildSSMMLeaderboardSelectMenu
+    // f_UPDATELBTIMEFRAME_LM (all three menus): three choices (index up to 2), not two
     {"pause.pak", 0x52ec0, 0, {0x96, 0x05, 0x00, 0x07, 0x01, 0x00, 0x00, 0x00}, {0x96, 0x05, 0x00, 0x07, 0x02},
      "three timeframes"},
     // the end-of-level scoreboard asks IsPlayerOnline before it sends the score (and shows the
@@ -776,10 +782,11 @@ static const Patch patches[] = {
     // yes while the leaderboard is online (IsPlayerOnline stays no for the match menus)
 #define SCORES_ONLINE(at) {"scorebrd.pak", at, 15, "IsPlayerOnline", "ahScoresOnline", "scores sent online"}
     SCORES_ONLINE(0x21a6b), SCORES_ONLINE(0x225db), SCORES_ONLINE(0x22a48),
-    // f_LEADERBOARDSELECT_AH: expiretime = the choice (0 lifetime, 1 monthly, 2 weekly, as the
+    // f_LEADERBOARDSELECT_AH/_PDA/_SSMM: expiretime = the choice (0 lifetime, 1 monthly, 2 weekly, as the
     // board's own label reads it: text 151 + expiretime), not the choice + 1
-    {"pause.pak", 0x3fba1, 0, {0x96, 0x05, 0x00, 0x07, 0x01, 0x00, 0x00, 0x00}, {0x96, 0x05, 0x00, 0x07, 0x00},
-     "timeframe as chosen"},
+#define AS_CHOSEN(at) {"pause.pak", at, 0, {0x96, 0x05, 0x00, 0x07, 0x01, 0x00, 0x00, 0x00}, {0x96, 0x05, 0x00, 0x07, 0x00}, \
+                       "timeframe as chosen"}
+    AS_CHOSEN(0x3fba1), AS_CHOSEN(0x40019), AS_CHOSEN(0x4023f),   // _AH, _PDA, _SSMM
 };
 
 // ahTF(item): the leaderboard TIMEFRAME choices (see the patch above)
@@ -1012,6 +1019,15 @@ static void set_text(AsVm *vm, AsVal field, const char *t) {
     if (field.t == V_OBJ) as_set(vm, field, as_atom(vm, "text"), as_strv(as_str(vm, t)));
 }
 
+// The board's rows ask for Arial at 14 px; drawn in the game's own font that reads far too
+// small on the Vita, so the row fields (one shared definition) get 23 px, the row spacing.
+#define LB_ROW_TEXT 460   // twips
+static void row_field(AsVm *vm, AsVal field, const char *t) {
+    AsMc *mc = field.t == V_OBJ && field.o->type == OBJ_MC ? (AsMc *)field.o : NULL;
+    if (mc && mc->text && mc->text->height < LB_ROW_TEXT) ((EditText *)mc->text)->height = LB_ROW_TEXT;
+    set_text(vm, field, t);
+}
+
 static AsVal MenuLeaderboards(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int filter = (int)as_tonum(vm, ARG(1)), cmd = (int)as_tonum(vm, ARG(3));
@@ -1045,10 +1061,10 @@ static AsVal MenuLeaderboards(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
             snprintf(score, sizeof score, "%.0f", lb_rows[i].score);
             name = lb_rows[i].name;
         }
-        set_text(vm, ARG(5), num);
-        set_text(vm, ARG(6), name);
-        set_text(vm, ARG(7), score);
-        set_text(vm, ARG(8), "");
+        row_field(vm, ARG(5), num);
+        row_field(vm, ARG(6), name);
+        row_field(vm, ARG(7), score);
+        row_field(vm, ARG(8), "");
         return as_undef();
     }
     case 999: lb_state = 0; lb_rows = NULL, lb_nrows = 0, lb_me = -1; return as_undef();
