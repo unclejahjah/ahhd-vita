@@ -159,3 +159,11 @@ The second argument of the default mode is a root frame label. ALIEN has 72, inc
 ## License
 
 The source code is under the MIT License, see `LICENSE`. That does not cover Alien Hominid HD or any of its art, audio, data or names, which belong to The Behemoth.
+
+---
+
+<p align="center">
+  <a href="https://buymeacoffee.com/sirjahjah">
+    <img src="assets/buy-me-a-coffee.png" alt="Buy me a coffee" width="250">
+  </a>
+</p>
