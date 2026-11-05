@@ -27,7 +27,7 @@ The game runs silent without `sounds` and `music`.
 | Cross | Jump, accept |
 | Square | Shoot |
 | Circle | Grenade, back |
-| Triangle | Interact |
+| Triangle | Hold with Down on the ground to dig; get in or out of a vehicle |
 | L, R | Roll |
 | Start | Pause in a level |
 | Select | Use a coin to continue |
