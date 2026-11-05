@@ -155,3 +155,7 @@ gcc -O2 -Ithird_party/libtess2/Include -o hosttest tools/hosttest.c \
 `--root file.pak frame out [zoom] [pan_x] [pan_y]` draws one root frame on a 960x544 screen, framed as the Vita viewer frames it.
 
 The second argument of the default mode is a root frame label. ALIEN has 72, including `stand`, `walk`, `jump`, `roll`, `shoot_stand`, `shoot_up`, `slash`, `dig`, `flip`, `beam` and the `die_*` set.
+
+## License
+
+The source code is under the MIT License, see `LICENSE`. That does not cover Alien Hominid HD or any of its art, audio, data or names, which belong to The Behemoth.
