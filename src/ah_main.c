@@ -609,6 +609,10 @@ static void read_pad(int port, SceCtrlData *pad) {
     if (r < 0) {
         memset(pad, 0, sizeof *pad);
         pad->lx = pad->ly = pad->rx = pad->ry = 128;
+    } else if (port) {
+        // Ext2 reports L/R as L1/R1, not the LTRIGGER/RTRIGGER bits map_pad tests
+        if (pad->buttons & SCE_CTRL_L1) pad->buttons |= SCE_CTRL_LTRIGGER;
+        if (pad->buttons & SCE_CTRL_R1) pad->buttons |= SCE_CTRL_RTRIGGER;
     }
 }
 
