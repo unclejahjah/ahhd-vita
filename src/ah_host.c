@@ -90,8 +90,13 @@ static AsVal memcard_seek(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 static AsVal memcard_read(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int p = port_arg(vm, ARG(0));
-    int v = memcard[0][memcard_pos[p]];
-    memcard_pos[p] = (memcard_pos[p] + 1) % MEMCARD_SIZE;
+    int off = memcard_pos[p], v = memcard[0][off];
+    memcard_pos[p] = (off + 1) % MEMCARD_SIZE;
+    // A save whose options were never touched holds 0 at 70 and 72. New Game lifts player 1
+    // to the defaults, but player 2's join reads the card as it is (difficulty 0: 99
+    // grenades, shield 2): give the other ports the same defaults, 1 and 2.
+    if (p != 0 && v == 0 && off == 70) v = 1;
+    if (p != 0 && v == 0 && off == 72) v = 2;
     return as_num(v);
 }
 
