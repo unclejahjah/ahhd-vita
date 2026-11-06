@@ -982,10 +982,23 @@ static const char *lb_name(void) {
     return n && *n ? n : "Player";
 }
 
+// Co-op games send no scores (Jah's call: both players share the Vita's one name). Player 2
+// has joined once the scripts give GLOBAL_alien2_port a port (a new game sets it to -1; it
+// stays set for the rest of the run).
+static int coop_game(AsVm *vm) {
+    AsVal where[3] = {cc_flash_global(vm, "GLOBAL_alien2_port"),
+                      as_get(vm, as_objv(vm->global), as_atom(vm, "GLOBAL_alien2_port")),
+                      vm->root ? as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "GLOBAL_alien2_port")) : as_undef()};
+    for (int i = 0; i < 3; i++)
+        if (where[i].t == V_NUM && where[i].n >= 0) return 1;
+    return 0;
+}
+
 static AsVal UpdateLeaderboard(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     log_call(vm, "UpdateLeaderboard", argc, argv);
     if (argc < 4 || !ah_lb_submit || !ah_lb_online || !ah_lb_online()) return as_undef();
+    if (coop_game(vm)) return as_undef();
     const char *board = as_tostr(vm, argv[1])->s;
     double score = as_tonum(vm, argv[3]);
     if (strcmp(board, "ahhd") || !isfinite(score) || score <= 0) return as_undef();   // the main game only
