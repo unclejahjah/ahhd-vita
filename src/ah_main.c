@@ -428,8 +428,9 @@ static const PortKeys PORT_KEYS[2] = {
 #define STICK_DEAD 50   // of 128
 
 // menu: a menu layer is open or no level is running (player 2's d-pad then also sends the
-// arrow keys, which the menus share, and its Select is safe to send)
-static void map_pad(const SceCtrlData *pad, int port, int menu) {
+// arrow keys, which the menus share). select_ok: a menu layer is open, the only time
+// player 2's Select (54) is safe (neutron and pinata aren't levels but run f_ScreenSize)
+static void map_pad(const SceCtrlData *pad, int port, int menu, int select_ok) {
     const PortKeys *k = &PORT_KEYS[port];
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
@@ -452,7 +453,7 @@ static void map_pad(const SceCtrlData *pad, int port, int menu) {
     if (b & SCE_CTRL_LTRIGGER) cc_keys[k->roll_left] = 1;
     if (b & SCE_CTRL_RTRIGGER) cc_keys[k->roll_right] = 1;
     if (b & SCE_CTRL_START) cc_keys[k->start] = 1;
-    if (port && menu && (b & SCE_CTRL_SELECT)) cc_keys[k->select] = 1;
+    if (port && select_ok && (b & SCE_CTRL_SELECT)) cc_keys[k->select] = 1;
 }
 
 // The controllers: on a PS TV they are sceCtrl ports 1-4, player 1 on port 1 and player 2
@@ -615,10 +616,10 @@ int main(void) {
         if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
         int level = ah_in_level() && !vm->overlay;
         memset(cc_keys, 0, sizeof cc_keys);
-        if (!debug) map_pad(&pad, 0, !level);
+        if (!debug) map_pad(&pad, 0, !level, 0);
         // player 2's d-pad works the shared menu arrows, except in player 1's pause menu
         int p1_paused = ah_paused && as_tonum(vm, cc_flash_global(vm, "g_nPausePlayer")) == 0;
-        map_pad(&pad2, 1, !level && !p1_paused);
+        map_pad(&pad2, 1, !level && !p1_paused, vm->overlay != NULL);   // 54 only in a menu layer
         // In a level START is the exe's: on a port whose alien is playing it opens the pause
         // menu for that port; on a port whose HUD is waiting (player 2's "press start" to
         // join, or a continue after the last life) it goes to the scripts. Player 1's SELECT
