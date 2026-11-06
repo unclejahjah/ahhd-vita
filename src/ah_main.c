@@ -622,9 +622,9 @@ int main(void) {
         map_pad(&pad2, 1, !level && !p1_paused, vm->overlay != NULL);   // 54 only in a menu layer
         // In a level START is the exe's: on a port whose alien is playing it opens the pause
         // menu for that port; on a port whose HUD is waiting (player 2's "press start" to
-        // join, or a continue after the last life) it goes to the scripts. Player 1's SELECT
-        // alone is also their start key there (the continue, as before); Select with Start or
-        // Up stays the debug combos. Before the scripts say which ports play, player 1's
+        // join, or a continue after the last life) it goes to the scripts. SELECT alone is also
+        // the start key there, as the HUD's prompt shows it (for player 1, Select with Start or
+        // Up stays the debug combos). Before the scripts say which ports play, player 1's
         // START pauses and player 2's goes to the scripts.
         if (level) {
             int p1 = ah_port_active(vm, 0), p2 = ah_port_active(vm, 1);
@@ -632,6 +632,9 @@ int main(void) {
             if (debug && !(pad.buttons & (SCE_CTRL_START | SCE_CTRL_UP))) cc_keys[K_START] = 1;
             if (p1 == 0 && !debug && (pad.buttons & SCE_CTRL_START)) cc_keys[K_START] = 1;
             if (p2 == 1) cc_keys[PORT_KEYS[1].start] = 0;
+            // the HUD shows the start key as SELECT in a level (GetInputBinding), so player 2's
+            // SELECT joins (or continues) as well while their alien waits
+            else if (pad2.buttons & SCE_CTRL_SELECT) cc_keys[PORT_KEYS[1].start] = 1;
             if (p1 != 0 && !debug && (pressed & SCE_CTRL_START)) ah_request_pause(vm, 0);
             else if (p2 == 1 && (pressed2 & SCE_CTRL_START)) ah_request_pause(vm, 1);
         } else if (!debug && (pressed & SCE_CTRL_START) && !vm->overlay) {
