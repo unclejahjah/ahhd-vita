@@ -36,6 +36,13 @@ extern void (*ah_music_pause)(int paused);
 extern void (*ah_audio_volumes)(float music, float sfx);
 extern void (*ah_sfx_stop_all)(void);
 extern void (*ah_sfx_hold)(int hold);   // freeze (1) or resume (0) the sounds playing now
+// online leaderboards (the main game's board), all optional:
+typedef struct { int rank; char name[32]; double score; } AhLbRow;
+extern const char *(*ah_lb_player_name)(void);                         // shown on the boards
+extern int (*ah_lb_online)(void);                                      // option on, network up
+extern void (*ah_lb_submit)(const char *board, int difficulty, double score);
+extern void (*ah_lb_request)(const char *board, int difficulty, int timeframe, int around_me);   // timeframe 0 week, 1 month, 2 all
+extern int (*ah_lb_poll)(const AhLbRow **rows, int *nrows, int *me);   // 0 busy, 1 done, -1 failed
 extern void (*ah_log)(const char *line);   // optional: where logged calls go
 
 #endif

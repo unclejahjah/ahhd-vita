@@ -47,7 +47,6 @@ LOGGED(MenuAchievements, as_undef())
 LOGGED(MenuMultiplayer, as_undef())
 LOGGED(MenuReturnToArcade, as_undef())
 LOGGED(MenuUnlockFullGame, as_undef())
-LOGGED(LoginToOnlineAccount, as_bool(0))
 LOGGED(ListenForKeyBinding, as_undef())
 LOGGED(ResetKeyBindings, as_undef())
 LOGGED(ChangeVideoSettings, as_undef())
@@ -677,21 +676,78 @@ static AsVal QuitTo(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 typedef struct {
     const char *file;          // e.g. "pause.pak"
     uint32_t at;               // offset in the SWF
-    uint8_t expect[8];         // what must be there
-    uint8_t put[5];            // what goes there
+    uint8_t n;                 // bytes checked and written (0: 8 checked, 5 written)
+    uint8_t expect[20];        // what must be there
+    uint8_t put[20];           // what goes there
     const char *why;
 } Patch;
+
+// "Not; If" -> "Pop; Jump": the If's branch is always taken
+#define ALWAYS_JUMP(lo, hi) {0x12, 0x9d, 0x02, 0x00, lo, hi}, {0x17, 0x99, 0x02, 0x00, lo, hi}
 
 static const Patch patches[] = {
     // f_BuildPlayerOptionsMenu: jump over the VIBRATION item (text 31) to the next one; the
     // Vita has no rumble
-    {"pause.pak", 0x45e78, {0x96, 0x15, 0x00, 0x04, 0x05, 0x04, 0x02, 0x03}, {0x99, 0x02, 0x00, 0xcb, 0x00},
+    {"pause.pak", 0x45e78, 0, {0x96, 0x15, 0x00, 0x04, 0x05, 0x04, 0x02, 0x03}, {0x99, 0x02, 0x00, 0xcb, 0x00},
      "no vibration option"},
     // f_BuildMainOptionsMenu: jump over the CREDITS item (text 25) to the end of the menu; the
     // credits text lived in the exe, so the roll would be empty
-    {"pause.pak", 0x44b38, {0x96, 0x14, 0x00, 0x04, 0x04, 0x04, 0x03, 0x03}, {0x99, 0x02, 0x00, 0x3a, 0x00},
+    {"pause.pak", 0x44b38, 0, {0x96, 0x14, 0x00, 0x04, 0x04, 0x04, 0x03, 0x03}, {0x99, 0x02, 0x00, 0x3a, 0x00},
      "no credits option"},
+
+    // ---- Leaderboards: one global board (no friends filter, no gamer card), and a
+    // LIFETIME timeframe next to MONTHLY and WEEKLY
+    // f_SetIconsLeaderboard: jump over the Triangle "SHOW GAMER CARD" button
+    {"pause.pak", 0x3debf, 0, {0x96, 0x04, 0x00, 0x04, 0x02, 0x08, 0x46, 0x4e}, {0x99, 0x02, 0x00, 0x7a, 0x00},
+     "no gamer card button"},
+    // the board's input: Triangle (gamer card) and Square (filter) do nothing
+    {"pause.pak", 0x4d631, 6, ALWAYS_JUMP(0x32, 0x00), "no gamer card"},
+    {"pause.pak", 0x4d678, 6, ALWAYS_JUMP(0x56, 0x01), "no friends filter"},
+    // the board's top line: skip the Square "FILTER: ..." label
+    {"pause.pak", 0x4b89c, 0, {0x96, 0x15, 0x00, 0x07, 0xeb, 0x03, 0x00, 0x00}, {0x99, 0x02, 0x00, 0x2a, 0x01},
+     "no filter label"},
+    // f_LEADERBOARDSELECT_*: friendsfilter starts at 0 (everyone) instead of 1 (friends)
+#define ALL_SCORES(at) {"pause.pak", at, 11, {0xa3, 0x08, 0x00, 0x09, 0x86, 0x01, 0x07, 0x01, 0x00, 0x00, 0x00}, \
+                        {0xa3, 0x08, 0x00, 0x09, 0x86, 0x01, 0x07, 0x00, 0x00, 0x00, 0x00}, "global board"}
+    ALL_SCORES(0x3fa51), ALL_SCORES(0x3fc79), ALL_SCORES(0x3fecb), ALL_SCORES(0x40103), ALL_SCORES(0x403a3),
+    // f_BuildAHLeaderboardSelectMenu, the TIMEFRAME item: "index = 0" becomes ahTF(item), which
+    // gives it LIFETIME, MONTHLY and WEEKLY (texts 151-153)
+    {"pause.pak", 0x46e15, 18,
+     {0x96, 0x0e, 0x00, 0x04, 0x02, 0x09, 0x8f, 0x01, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0x4f},
+     {0x96, 0x0d, 0x00, 0x04, 0x02, 0x07, 0x01, 0x00, 0x00, 0x00, 0x00, 'a', 'h', 'T', 'F', 0x00, 0x3d, 0x17},
+     "lifetime timeframe"},
+#define TIMEFRAMES(at, reg) {"pause.pak", at, 18, \
+     {0x96, 0x0e, 0x00, 0x04, reg, 0x09, 0x8f, 0x01, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0x4f}, \
+     {0x96, 0x0d, 0x00, 0x04, reg, 0x07, 0x01, 0x00, 0x00, 0x00, 0x00, 'a', 'h', 'T', 'F', 0x00, 0x3d, 0x17}, \
+     "lifetime timeframe"}
+    TIMEFRAMES(0x4719a, 0x02),   // f_BuildPDALeaderboardSelectMenu
+    TIMEFRAMES(0x47386, 0x03),   // f_BuildSSMMLeaderboardSelectMenu
+    // f_UPDATELBTIMEFRAME_LM (all three menus): three choices (index up to 2), not two
+    {"pause.pak", 0x52ec0, 0, {0x96, 0x05, 0x00, 0x07, 0x01, 0x00, 0x00, 0x00}, {0x96, 0x05, 0x00, 0x07, 0x02},
+     "three timeframes"},
+    // the end-of-level scoreboard asks IsPlayerOnline before it sends the score (and shows the
+    // sign-in notice when the answer is no); its frames ask ahScoresOnline instead, which is
+    // yes while the leaderboard is online (IsPlayerOnline stays no for the match menus)
+#define SCORES_ONLINE(at) {"scorebrd.pak", at, 15, "IsPlayerOnline", "ahScoresOnline", "scores sent online"}
+    SCORES_ONLINE(0x21a6b), SCORES_ONLINE(0x225db), SCORES_ONLINE(0x22a48),
+    // f_LEADERBOARDSELECT_AH/_PDA/_SSMM: expiretime = the choice (0 lifetime, 1 monthly, 2 weekly, as the
+    // board's own label reads it: text 151 + expiretime), not the choice + 1
+#define AS_CHOSEN(at) {"pause.pak", at, 0, {0x96, 0x05, 0x00, 0x07, 0x01, 0x00, 0x00, 0x00}, {0x96, 0x05, 0x00, 0x07, 0x00}, \
+                       "timeframe as chosen"}
+    AS_CHOSEN(0x3fba1), AS_CHOSEN(0x40019), AS_CHOSEN(0x4023f),   // _AH, _PDA, _SSMM
 };
+
+// ahTF(item): the leaderboard TIMEFRAME choices (see the patch above)
+static AsVal ahTF(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    AsVal item = ARG(0);
+    if (item.t != V_OBJ) return as_undef();
+    as_set(vm, item, as_atom(vm, "s0"), as_num(151));   // LIFETIME
+    as_set(vm, item, as_atom(vm, "s1"), as_num(152));   // MONTHLY
+    as_set(vm, item, as_atom(vm, "s2"), as_num(153));   // WEEKLY
+    as_set(vm, item, as_atom(vm, "index"), as_num(0));
+    return as_undef();
+}
 
 void ah_patch_movie(const char *file, Movie *m) {
     cc_buttons_ah_glyphs(m);   // PlayStation buttons like the Castle Crashers build
@@ -699,8 +755,9 @@ void ah_patch_movie(const char *file, Movie *m) {
     base = base ? base + 1 : file;
     for (size_t i = 0; i < sizeof patches / sizeof *patches; i++) {
         const Patch *p = &patches[i];
-        if (strcasecmp(base, p->file) || p->at + 8 > m->len || memcmp(m->data + p->at, p->expect, 8)) continue;
-        memcpy(m->data + p->at, p->put, 5);
+        int n = p->n ? p->n : 8;
+        if (strcasecmp(base, p->file) || p->at + n > m->len || memcmp(m->data + p->at, p->expect, n)) continue;
+        memcpy(m->data + p->at, p->put, p->n ? p->n : 5);
         if (ah_log) {
             char line[96];
             snprintf(line, sizeof line, "patched %s: %s", p->file, p->why);
@@ -840,11 +897,140 @@ static AsVal f_SetLoadingLevelText(AsVm *vm, AsVal this_, int argc, AsVal *argv)
     return as_undef();
 }
 
+static const char *lb_name(void);
 static AsVal SetTextToGamerTag(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     for (int i = 1; i < argc && i < 3; i++)
-        if (argv[i].t == V_OBJ) as_set(vm, argv[i], as_atom(vm, "text"), as_strv(vm->empty));
+        if (argv[i].t == V_OBJ) as_set(vm, argv[i], as_atom(vm, "text"), as_strv(ah_lb_player_name ? as_str(vm, lb_name()) : vm->empty));
     return as_undef();
+}
+
+// ---- online leaderboards ----------------------------------------------------------------
+// The menus' Leaderboards screen and the scoreboard talk to the exe through these calls; the
+// front end supplies the backend (ah_lb_*: a score server over Wi-Fi on the Vita, a fake
+// board in the desktop harness). Only the main game's board ("ahhd", by difficulty) is
+// online; with no backend, or the option off, they answer "not online" as before.
+//   UpdateLeaderboard(port, "ahhd", difficulty, score)   after a level, from the scoreboard
+//   LoginToOnlineAccount(port)                           opening Leaderboards
+//   MenuLeaderboards(port, filter, firstrank, command, ...), filter 0 all / 1 friends / 2 me:
+//     0 (board, ranked, difficulty, timeframe 0 lifetime/1 month/2 week) start   100 status: 0 busy, >0 ready, <0 error
+//     200 rows   201 the player's row (-1: none)   300 (row, rank, name, score, score2 fields)
+//     310 (count, offset) scroll   500 (row) select   999 release
+
+const char *(*ah_lb_player_name)(void);
+int (*ah_lb_online)(void);
+void (*ah_lb_submit)(const char *board, int difficulty, double score);
+void (*ah_lb_request)(const char *board, int difficulty, int timeframe, int around_me);
+int (*ah_lb_poll)(const AhLbRow **rows, int *nrows, int *me);
+
+static int lb_on(void) { return ah_lb_online && ah_lb_poll && ah_lb_online(); }
+
+static const char *lb_name(void) {
+    const char *n = ah_lb_player_name ? ah_lb_player_name() : NULL;
+    return n && *n ? n : "Player";
+}
+
+// Co-op games send no scores (Jah's call: both players share the Vita's one name). Player 2
+// has joined once the scripts give GLOBAL_alien2_port a port (a new game sets it to -1; it
+// stays set for the rest of the run).
+static int coop_game(AsVm *vm) {
+    AsVal where[3] = {cc_flash_global(vm, "GLOBAL_alien2_port"),
+                      as_get(vm, as_objv(vm->global), as_atom(vm, "GLOBAL_alien2_port")),
+                      vm->root ? as_get(vm, as_objv(&vm->root->obj), as_atom(vm, "GLOBAL_alien2_port")) : as_undef()};
+    for (int i = 0; i < 3; i++)
+        if (where[i].t == V_NUM && where[i].n >= 0) return 1;
+    return 0;
+}
+
+static AsVal UpdateLeaderboard(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    log_call(vm, "UpdateLeaderboard", argc, argv);
+    if (argc < 4 || !ah_lb_submit || !ah_lb_online || !ah_lb_online()) return as_undef();
+    if (coop_game(vm)) return as_undef();
+    const char *board = as_tostr(vm, argv[1])->s;
+    double score = as_tonum(vm, argv[3]);
+    if (strcmp(board, "ahhd") || !isfinite(score) || score <= 0) return as_undef();   // the main game only
+    ah_lb_submit(board, (int)as_tonum(vm, argv[2]), score);
+    return as_undef();
+}
+
+static AsVal LoginToOnlineAccount(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    log_call(vm, "LoginToOnlineAccount", argc, argv);
+    return as_bool(lb_on());
+}
+
+// Online play stays off: only the Leaderboards screen (f_UPDATELEADERBOARD) is told the
+// player is online; the match menus still see "offline" and send the player to their notice.
+static AsVal IsPlayerOnline(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_; (void)argc; (void)argv;
+    int lb = vm->cur_fn && vm->cur_fn->fname && !strcmp(vm->cur_fn->fname->s, "f_UPDATELEADERBOARD");
+    return as_bool(lb && lb_on());
+}
+
+static AsVal ahScoresOnline(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)vm; (void)this_; (void)argc; (void)argv;
+    return as_bool(lb_on());
+}
+
+static const AhLbRow *lb_rows;
+static int lb_nrows, lb_me = -1, lb_state;   // lb_state: 0 none, 1 asked, 2 ready, -1 failed
+
+static void set_text(AsVm *vm, AsVal field, const char *t) {
+    if (field.t == V_OBJ) as_set(vm, field, as_atom(vm, "text"), as_strv(as_str(vm, t)));
+}
+
+// The board's rows ask for Arial at 14 px; drawn in the game's own font that reads far too
+// small on the Vita, so the row fields (one shared definition) get 23 px, the row spacing.
+#define LB_ROW_TEXT 460   // twips
+static void row_field(AsVm *vm, AsVal field, const char *t) {
+    AsMc *mc = field.t == V_OBJ && field.o->type == OBJ_MC ? (AsMc *)field.o : NULL;
+    if (mc && mc->text && mc->text->height < LB_ROW_TEXT) ((EditText *)mc->text)->height = LB_ROW_TEXT;
+    set_text(vm, field, t);
+}
+
+static AsVal MenuLeaderboards(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
+    (void)this_;
+    int filter = (int)as_tonum(vm, ARG(1)), cmd = (int)as_tonum(vm, ARG(3));
+    if (cmd != 100 && cmd != 300) log_call(vm, "MenuLeaderboards", argc, argv);
+    if (!lb_on()) return as_num(-1);
+    switch (cmd) {
+    case 0: {   // board, ranked, difficulty, timeframe
+        const char *board = as_tostr(vm, ARG(4))->s;
+        lb_rows = NULL, lb_nrows = 0, lb_me = -1;
+        if (strcmp(board, "ahhd")) { lb_state = 2; return as_num(1); }   // other boards: empty
+        int tf = (int)as_tonum(vm, ARG(7));   // the game's: 0 lifetime, 1 monthly, 2 weekly
+        ah_lb_request(board, (int)as_tonum(vm, ARG(6)), tf == 1 ? 1 : tf == 2 ? 0 : 2, filter == 2);
+        lb_state = 1;
+        return as_num(1);
+    }
+    case 100:
+        if (lb_state == 1) {
+            int r = ah_lb_poll(&lb_rows, &lb_nrows, &lb_me);
+            if (r > 0) lb_state = 2;
+            else if (r < 0) lb_state = -1;
+        }
+        return as_num(lb_state == 2 ? 1 : lb_state == 1 ? 0 : -3);
+    case 200: return as_num(lb_state == 2 ? lb_nrows : 0);
+    case 201: return as_num(lb_state == 2 ? lb_me : -1);
+    case 300: {   // row (0-based), then its rank, name, score and second score fields
+        int i = (int)as_tonum(vm, ARG(4));
+        char num[16] = "", score[24] = "";
+        const char *name = "";
+        if (lb_state == 2 && i >= 0 && i < lb_nrows) {
+            snprintf(num, sizeof num, "%d", lb_rows[i].rank);
+            snprintf(score, sizeof score, "%.0f", lb_rows[i].score);
+            name = lb_rows[i].name;
+        }
+        row_field(vm, ARG(5), num);
+        row_field(vm, ARG(6), name);
+        row_field(vm, ARG(7), score);
+        row_field(vm, ARG(8), "");
+        return as_undef();
+    }
+    case 999: lb_state = 0; lb_rows = NULL, lb_nrows = 0, lb_me = -1; return as_undef();
+    default: return as_num(1);   // 310 scroll (every row is already here), 500 select
+    }
 }
 
 // GetTextLocalizationScale(N): the _xscale (percent) string N needs to fit; English fits.
@@ -879,7 +1065,6 @@ void ah_host_init(AsVm *vm) {
     as_def_fn(vm, g, "EnableMouse", ret_undef);
     as_def_fn(vm, g, "VibrateEnable", ret_undef);       // no rumble
     as_def_fn(vm, g, "SetRichPresenceItem", ret_undef);
-    as_def_fn(vm, g, "IsPlayerOnline", ret_false);      // no online play on the Vita
     as_def_fn(vm, g, "IsPlayerAllowedOnlinePlay", ret_false);
     as_def_fn(vm, g, "EnteredGameViaInvite", ret_false);
     as_def_fn(vm, g, "PremiumContent", ret_false);
@@ -894,7 +1079,7 @@ void ah_host_init(AsVm *vm) {
     DEF(ClearUserToControllerBindings); DEF(StartControllerPairing); DEF(SetBackgroundAlpha);
     DEF(GetPrimaryUserPort); DEF(CreateLocalGame); DEF(CancelGame); DEF(StopControllerPairing);
     DEF(ShowSignInScreen); DEF(QuitTo); DEF(EndingAttract); DEF(MenuAchievements); DEF(MenuMultiplayer);
-    DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(ListenForKeyBinding);
+    DEF(MenuReturnToArcade); DEF(MenuUnlockFullGame); DEF(LoginToOnlineAccount); DEF(IsPlayerOnline); DEF(ahScoresOnline); DEF(UpdateLeaderboard); DEF(MenuLeaderboards); DEF(ahTF); DEF(ListenForKeyBinding);
     DEF(ResetKeyBindings); DEF(ChangeVideoSettings); DEF(SetMusicVolume); DEF(SetSfxVolume); DEF(GetMusicVolume); DEF(GetSfxVolume); DEF(PauseMusic); DEF(SetTextToGamerTag); DEF(f_SetLoadingLevelText); DEF(DisplayUnlock);
     DEF(f_PDALoadLevelArray); DEF(f_PDALoadLiveLevelArray); DEF(f_PDAGetNumLiveLevelsInPack); DEF(f_PDAGetNumLivePacks);
     DEF(f_PDALiveLevelIndexToPublisherId); DEF(f_PDAGetLiveLevelName); DEF(f_PDASetLevelBoxText); DEF(f_SetCreditText);
