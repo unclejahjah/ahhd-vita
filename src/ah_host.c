@@ -526,6 +526,51 @@ static int loading_frames;       // ticks it has run
 #define PRIME_TICKS 3            // level ticks run behind it
 static char loading_target[64];  // file still to load, "" once loaded
 
+void (*ah_prefetch)(const char *const *files, int n);
+int (*ah_prefetch_pending)(void);
+
+// The files each level's first frames load (found by running each one in the desktop
+// harness). The front end reads them in the background while the loading screen plays,
+// so the level loads from memory when the screen hands over.
+static const char *const level_files[][9] = {
+    {"chal12", "hud", "alien", "fbi", "abullets", "agrenades", "ebullets", "egrenades"},
+    {"chal31", "hud", "alien", "abullets", "agrenades", "backgrounds3"},
+    {"chal34", "hud", "alien", "army", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds4"},
+    {"level11", "hud", "alien", "fbi", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds"},
+    {"level12", "hud", "alien", "fbi", "abullets", "agrenades", "ebullets", "egrenades"},
+    {"level13", "hud", "alien", "fbi", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds"},
+    {"level14", "hud", "alien", "fbi", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds"},
+    {"level15"},
+    {"level21", "hud", "alien", "kgb", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds2"},
+    {"level22", "hud", "alien", "kgb", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds2"},
+    {"level23", "hud", "alien", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds2"},
+    {"level24", "hud", "alien", "kgb", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds2"},
+    {"level25", "hud", "alien", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds2"},
+    {"level26"},
+    {"level31", "hud", "alien", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds3"},
+    {"level32", "hud", "alien", "army", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds3"},
+    {"level33", "hud", "alien", "army", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds4"},
+    {"level34", "hud", "alien", "army", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds4"},
+    {"level35", "hud", "alien", "abullets", "agrenades", "ebullets", "egrenades", "backgrounds4"},
+};
+
+static void prefetch_level(const char *file) {
+    if (!ah_prefetch) return;
+    char base[64];
+    snprintf(base, sizeof base, "%s", file);
+    char *dot = strchr(base, '.');
+    if (dot) *dot = 0;
+    for (size_t i = 0; i < sizeof level_files / sizeof *level_files; i++) {
+        if (strcasecmp(base, level_files[i][0])) continue;
+        int n = 0;
+        while (n < 9 && level_files[i][n]) n++;
+        ah_prefetch(level_files[i], n);
+        return;
+    }
+    const char *one[] = {base};   // a level not in the table: at least its own file
+    ah_prefetch(one, 1);
+}
+
 static int wants_loading_screen(const char *file) {
     return !strncasecmp(file, "level", 5) || !strncasecmp(file, "chal", 4);
 }
@@ -604,16 +649,22 @@ const char *ah_tick(AsVm *vm) {
     if (ah_loading) {   // only the loading screen runs
         run_as_root(vm, &ah_loading, 0);
         loading_frames++;
-        if (loading_target[0] && loading_frames >= LOAD_AT) {   // its art is on screen: load now
+        // load once its art is on screen and the background reads are in (or after 60 s)
+        if (loading_target[0] && loading_frames >= LOAD_AT &&
+            (!ah_prefetch_pending || !ah_prefetch_pending() || loading_frames > 60 * 60)) {
             snprintf(changed, sizeof changed, "%s", loading_target);
             loading_target[0] = 0;
+            extern double as_time_ms(void);
+            double t0 = as_time_ms();
             int ok = change_root(vm, changed);
+            double t1 = as_time_ms();
             cc_set_flash_global(vm, "g_bLoaded", as_bool(1));
             if (!ok) { end_loading(vm); return NULL; }
             // the level's first frames load its parts (hud, players, enemies, backgrounds):
             // run them now, behind the loading screen, so all the loading is one pause
             // before its animation starts (and no black screen after it)
             for (int i = 0; i < PRIME_TICKS; i++) as_tick(vm);
+            if (ah_log) { char b[128]; snprintf(b, sizeof b, "loaded %s: file %.0f ms, first ticks %.0f ms", changed, t1 - t0, as_time_ms() - t1); ah_log(b); }
             return changed;
         }
         if (!loading_target[0] && (as_tobool(vm, cc_flash_global(vm, "g_bLevelLoaded")) || loading_frames > 30 * 30))
@@ -643,6 +694,7 @@ const char *ah_tick(AsVm *vm) {
         // first one shown has its art
         for (loading_frames = 0; loading_frames < 2; loading_frames++) run_as_root(vm, &ah_loading, 0);
         snprintf(loading_target, sizeof loading_target, "%s", changed);
+        prefetch_level(changed);
         vm->overlay = NULL;
         ah_paused = 0;
         if (ah_sfx_stop_all) ah_sfx_stop_all();

@@ -137,9 +137,8 @@ static void tessellate_bitmap_fill(TESStesselator *tess, const ShapeFill *sf, Bi
     grow_bounds(bb, mb.xy, mb.n);
 }
 
-static void tessellate_shape(Shape *s) {
+static void tessellate_shape_with(Shape *s, TESStesselator *tess) {
     if (s->tessellated) return;
-    if (!g_tess) g_tess = tessNewTess(NULL);
     MeshBuf mb = {0};
     for (int i = 0; i < s->nfills; i++) {
         const ShapeFill *sf = &s->fills[i];
@@ -147,9 +146,9 @@ static void tessellate_shape(Shape *s) {
             s->bfills = realloc(s->bfills, sizeof(BitmapFill) * (s->nbfills + 1));
             BitmapFill *bf = &s->bfills[s->nbfills++];
             memset(bf, 0, sizeof *bf);
-            tessellate_bitmap_fill(g_tess, sf, bf);
+            tessellate_bitmap_fill(tess, sf, bf);
         } else {
-            tessellate_fill(g_tess, sf, &mb);
+            tessellate_fill(tess, sf, &mb);
         }
     }
     for (int i = 0; i < s->nlines; i++) tessellate_line(&s->lines[i], &mb);
@@ -166,7 +165,7 @@ static void tessellate_shape(Shape *s) {
         grow_bounds(bb, corners, 2);
     }
     s->tessellated = 1;
-    render_stats.shapes_tessellated++;
+    __atomic_fetch_add(&render_stats.shapes_tessellated, 1, __ATOMIC_RELAXED);   // loader threads tessellate too
 }
 
 // Every shape of a movie, font glyphs included: calls fn(shape, ctx).
@@ -181,9 +180,22 @@ static void each_shape(Movie *m, void (*fn)(Shape *s, void *ctx), void *ctx) {
     }
 }
 
-static void tessellate_cb(Shape *s, void *ctx) { (void)ctx; tessellate_shape(s); }
+// the drawing thread's own tessellator, for shapes met before render_tessellate_all ran
+static void tessellate_shape(Shape *s) {
+    if (s->tessellated) return;
+    if (!g_tess) g_tess = tessNewTess(NULL);
+    tessellate_shape_with(s, g_tess);
+}
 
-void render_tessellate_all(Movie *m) { each_shape(m, tessellate_cb, NULL); }
+static void tessellate_cb(Shape *s, void *ctx) { tessellate_shape_with(s, ctx); }
+
+// with a tessellator of its own, so loader threads can run it on different movies at once
+void render_tessellate_all(Movie *m) {
+    TESStesselator *tess = tessNewTess(NULL);
+    if (!tess) return;
+    each_shape(m, tessellate_cb, tess);
+    tessDeleteTess(tess);
+}
 
 static inline uint32_t pack(const uint8_t *p) {
     return ((uint32_t)p[3] << 24) | ((uint32_t)p[2] << 16) | ((uint32_t)p[1] << 8) | p[0];

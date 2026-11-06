@@ -654,14 +654,14 @@ static void parse_place(Movie *mv, const uint8_t *d, size_t len, size_t pos, siz
     p.cx = CX_IDENTITY;
     if (move && old) p = *old;
     p.depth = depth;
-    if (!(move && old)) p.uid = next_uid++;   // a fresh instance
+    if (!(move && old)) p.uid = __atomic_fetch_add(&next_uid, 1, __ATOMIC_RELAXED);   // a fresh instance (loader threads parse at once)
     if (flags & 0x02) {
         int cid = u16(&b);
         if (move && old && old->cid != cid) {
             Mat keep = old->m;
             memset(&p, 0, sizeof(p));
             p.depth = depth; p.m = keep; p.cx = CX_IDENTITY;
-            p.uid = next_uid++;   // replaced by another character
+            p.uid = __atomic_fetch_add(&next_uid, 1, __ATOMIC_RELAXED);   // replaced by another character
         }
         p.cid = cid;
     }
