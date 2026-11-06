@@ -68,6 +68,9 @@ static AsVal ret_undef(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 // moving on a byte. Offsets: hats 0-31 (f_UnlockHat), Load Level from 32, minigames around
 // 49-56 (f_UnlockMiniGame), 58 on Missile Mastar scores, 64-66, 69 vibration, 70 aim
 // style, 72 lives, 73 turbo fire; the highest the scripts use is 81. All start at 0.
+// Every port reads and writes card 0: the options menu only ever writes port 1's card, so
+// player 2 in co-op would otherwise join on difficulty 0 with no hats, and their unlocks
+// would land on a card nobody reads. Each port keeps its own read/write position.
 #define MEMCARD_PORTS 4
 #define MEMCARD_SIZE 256
 static unsigned char memcard[MEMCARD_PORTS][MEMCARD_SIZE];
@@ -88,7 +91,7 @@ static AsVal memcard_seek(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 static AsVal memcard_read(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int p = port_arg(vm, ARG(0));
-    int v = memcard[p][memcard_pos[p]];
+    int v = memcard[0][memcard_pos[p]];
     memcard_pos[p] = (memcard_pos[p] + 1) % MEMCARD_SIZE;
     return as_num(v);
 }
@@ -96,7 +99,7 @@ static AsVal memcard_read(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
 static AsVal memcard_write(AsVm *vm, AsVal this_, int argc, AsVal *argv) {
     (void)this_;
     int p = port_arg(vm, ARG(0));
-    memcard[p][memcard_pos[p]] = (unsigned char)as_tonum(vm, ARG(1));
+    memcard[0][memcard_pos[p]] = (unsigned char)as_tonum(vm, ARG(1));
     memcard_pos[p] = (memcard_pos[p] + 1) % MEMCARD_SIZE;
     return as_undef();
 }
@@ -282,6 +285,20 @@ static char root_file[64];   // the root movie's file ("level15.cok6")
 
 // A story level or challenge is the root: there START is the pause menu, and SELECT is the
 // "start" key the HUD reads to spend a continue (a coin) after the last life
+// g_bPort<n>Active: the scripts set it true while that port's alien plays and false while
+// its HUD waits for START to join (or to spend a continue). START on an active port opens
+// the pause menu; on any other it goes to the scripts. port is 0-based; the scripts' own
+// numbering is 1-based (GLOBAL_alien2_port = 2), but a 0-based g_bPort0Active is honoured
+// too. -1: the scripts never set it.
+int ah_port_active(AsVm *vm, int port) {
+    char name[32];
+    snprintf(name, sizeof name, "g_bPort%dActive", 0);
+    int base = cc_flash_global(vm, name).t == V_UNDEF ? 1 : 0;
+    snprintf(name, sizeof name, "g_bPort%dActive", port + base);
+    AsVal v = cc_flash_global(vm, name);
+    return v.t == V_UNDEF ? -1 : as_tobool(vm, v);
+}
+
 int ah_in_level(void) {
     return !strncasecmp(root_file, "level", 5) || !strncasecmp(root_file, "chal", 4);
 }
