@@ -78,6 +78,12 @@ Tap the bubble. If a data file is missing, the app shows which one and where it 
 | Select + Start | Quit |
 | Select + Up | Debug overlay |
 
+### Two players (PS Vita TV)
+
+On a PS Vita TV, a second controller plays player 2. When the "press Select" prompt shows up for player 2 in a level, press Select or Start on the second controller to join. Player 2 has the same buttons as player 1, and their Start opens their own pause menu. Both players share one save, so player 2 uses player 1's difficulty and unlocks. A co-op game sends no scores to the online leaderboards.
+
+Co-op hasn't been tested on a real PS Vita TV yet; it was checked against the game's scripts on a PC. If player 2 doesn't respond, please open an issue and say which number each controller shows when you hold the PS button.
+
 ## Saves
 
 Progress, unlocks, options and volumes are kept in `ux0:data/AlienHominidHD/save.dat`. Back this file up before deleting the app's bubble.

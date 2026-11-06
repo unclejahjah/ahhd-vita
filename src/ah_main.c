@@ -397,10 +397,16 @@ static int free_unused_movies(AsVm *vm, RecolourCache *cache, void *cache_mem, s
     return unused;
 }
 
-// ---- controls -> the key codes the scripts read for port 1 ---------------------------
-// In game (f_GetAlienButtons): arrows 37-40, shoot 65, jump 83, grenade 68, interact 87,
-// roll left 81, roll right 69, start 49. Menus (pause.pak's pk1 clip): arrows, accept 97,
-// back 106, start 49, select 53.
+// ---- controls -> the key codes the scripts read ------------------------------------
+// The scripts read every port through Key.isDown, each port with its own codes.
+// Port 1, in game (f_GetAlienButtons): arrows 37-40, shoot 65, jump 83, grenade 68,
+// interact 87, roll left 81, roll right 69, start 49. Menus (pause.pak's pk1 clip): arrows,
+// accept 97, back 106, start 49, select 53.
+// Port 2, in game: left 74, up 73, right 76, down 75, shoot 70, jump 71, grenade 72,
+// interact 84, roll left 82, roll right 89, start 50. Menus (pk2): accept 99, back 108,
+// select 54. 54 is also one of f_ScreenSize's debug keys (it changes player 1's hat), so it
+// is only sent while a menu layer is open.
+// On a PS TV the second controller (sceCtrl port 2, or the next paired one) is player 2.
 
 enum {
     K_LEFT = 37, K_UP = 38, K_RIGHT = 39, K_DOWN = 40, K_START = 49, K_SELECT = 53,
@@ -408,23 +414,90 @@ enum {
     K_ACCEPT = 97, K_BACK = 106,
 };
 
+typedef struct {
+    uint8_t left, up, right, down, shoot, jump, grenade, interact, roll_left, roll_right, start;
+    uint8_t accept, back, select;
+} PortKeys;
+
+static const PortKeys PORT_KEYS[2] = {
+    {K_LEFT, K_UP, K_RIGHT, K_DOWN, K_SHOOT, K_JUMP, K_GRENADE, K_INTERACT, K_ROLL_LEFT, K_ROLL_RIGHT, K_START,
+     K_ACCEPT, K_BACK, K_SELECT},
+    {74, 73, 76, 75, 70, 71, 72, 84, 82, 89, 50, 99, 108, 54},
+};
+
 #define STICK_DEAD 50   // of 128
 
-static void map_pad(const SceCtrlData *pad) {
-    memset(cc_keys, 0, sizeof cc_keys);
+// menu: a menu layer is open or no level is running (player 2's d-pad then also sends the
+// arrow keys, which the menus share). select_ok: a menu layer is open, the only time
+// player 2's Select (54) is safe (neutron and pinata aren't levels but run f_ScreenSize)
+static void map_pad(const SceCtrlData *pad, int port, int menu, int select_ok) {
+    const PortKeys *k = &PORT_KEYS[port];
     unsigned b = pad->buttons;
     int lx = pad->lx - 128, ly = pad->ly - 128;
-    if ((b & SCE_CTRL_LEFT) || lx <= -STICK_DEAD) cc_keys[K_LEFT] = 1;
-    if ((b & SCE_CTRL_RIGHT) || lx >= STICK_DEAD) cc_keys[K_RIGHT] = 1;
-    if ((b & SCE_CTRL_UP) || ly <= -STICK_DEAD) cc_keys[K_UP] = 1;
-    if ((b & SCE_CTRL_DOWN) || ly >= STICK_DEAD) cc_keys[K_DOWN] = 1;
-    if (b & SCE_CTRL_CROSS) cc_keys[K_JUMP] = cc_keys[K_ACCEPT] = 1;
-    if (b & SCE_CTRL_SQUARE) cc_keys[K_SHOOT] = 1;
-    if (b & SCE_CTRL_CIRCLE) cc_keys[K_GRENADE] = cc_keys[K_BACK] = 1;
-    if (b & SCE_CTRL_TRIANGLE) cc_keys[K_INTERACT] = 1;
-    if (b & SCE_CTRL_LTRIGGER) cc_keys[K_ROLL_LEFT] = 1;
-    if (b & SCE_CTRL_RTRIGGER) cc_keys[K_ROLL_RIGHT] = 1;
-    if (b & SCE_CTRL_START) cc_keys[K_START] = 1;
+    int left = (b & SCE_CTRL_LEFT) || lx <= -STICK_DEAD, right = (b & SCE_CTRL_RIGHT) || lx >= STICK_DEAD;
+    int up = (b & SCE_CTRL_UP) || ly <= -STICK_DEAD, down = (b & SCE_CTRL_DOWN) || ly >= STICK_DEAD;
+    if (left) cc_keys[k->left] = 1;
+    if (right) cc_keys[k->right] = 1;
+    if (up) cc_keys[k->up] = 1;
+    if (down) cc_keys[k->down] = 1;
+    if (port && menu) {
+        if (left) cc_keys[K_LEFT] = 1;
+        if (right) cc_keys[K_RIGHT] = 1;
+        if (up) cc_keys[K_UP] = 1;
+        if (down) cc_keys[K_DOWN] = 1;
+    }
+    if (b & SCE_CTRL_CROSS) cc_keys[k->jump] = cc_keys[k->accept] = 1;
+    if (b & SCE_CTRL_SQUARE) cc_keys[k->shoot] = 1;
+    if (b & SCE_CTRL_CIRCLE) cc_keys[k->grenade] = cc_keys[k->back] = 1;
+    if (b & SCE_CTRL_TRIANGLE) cc_keys[k->interact] = 1;
+    if (b & SCE_CTRL_LTRIGGER) cc_keys[k->roll_left] = 1;
+    if (b & SCE_CTRL_RTRIGGER) cc_keys[k->roll_right] = 1;
+    if (b & SCE_CTRL_START) cc_keys[k->start] = 1;
+    if (port && select_ok && (b & SCE_CTRL_SELECT)) cc_keys[k->select] = 1;
+}
+
+// The controllers: on a PS TV they are sceCtrl ports 1-4, player 1 on port 1 and player 2
+// on the next paired port. A handheld Vita (or a PS TV with one controller) has only
+// player 1, on port 0 as before; player 2 then reads all zeros.
+static void pad_ports(int *p1, int *p2) {
+    static SceUInt64 checked;
+    static int port1, port2;
+    SceUInt64 now = sceKernelGetProcessTimeWide();
+    if (!checked || now - checked >= 1000000) {   // once a second: controllers come and go
+        checked = now;
+        SceCtrlPortInfo info;
+        port1 = port2 = 0;
+        if (sceCtrlGetControllerPortInfo(&info) >= 0) {
+            if (info.port[1] != SCE_CTRL_TYPE_UNPAIRED) port1 = 1;
+            for (int p = 2; p <= 4 && !port2; p++)
+                if (info.port[p] != SCE_CTRL_TYPE_UNPAIRED) port2 = p;
+        }
+    }
+    *p1 = port1;
+    *p2 = port2;
+}
+
+static void read_pad(int port, SceCtrlData *pad) {
+    int r = port ? sceCtrlPeekBufferPositiveExt2(port, pad, 1) : sceCtrlPeekBufferPositive(0, pad, 1);
+    if (r < 0) {
+        memset(pad, 0, sizeof *pad);
+        pad->lx = pad->ly = pad->rx = pad->ry = 128;
+    } else if (port) {
+        // Ext2 reports L/R as L1/R1, not the LTRIGGER/RTRIGGER bits map_pad tests
+        if (pad->buttons & SCE_CTRL_L1) pad->buttons |= SCE_CTRL_LTRIGGER;
+        if (pad->buttons & SCE_CTRL_R1) pad->buttons |= SCE_CTRL_RTRIGGER;
+    }
+}
+
+static void read_pads(SceCtrlData *pad1, SceCtrlData *pad2) {
+    int p1, p2;
+    pad_ports(&p1, &p2);
+    read_pad(p1, pad1);
+    if (p2) read_pad(p2, pad2);
+    else {
+        memset(pad2, 0, sizeof *pad2);
+        pad2->lx = pad2->ly = pad2->rx = pad2->ry = 128;
+    }
 }
 
 static void vita_warn(AsVm *vm, const char *msg) {
@@ -524,7 +597,7 @@ int main(void) {
         return 0;
     }
 
-    SceCtrlData pad, old = {0};
+    SceCtrlData pad, old = {0}, pad2, old2 = {0};
     int overlay = 0;
     SceUInt64 last = sceKernelGetProcessTimeWide(), acc = 0, prev = last;
     float fps = 0, tick_ms = 0, build_ms = 0, shown_tick = 0, shown_build = 0;
@@ -534,23 +607,39 @@ int main(void) {
     const SceUInt64 tick_us = 1000000 / 30;   // the game's frame rate
 
     for (;;) {
-        sceCtrlPeekBufferPositive(0, &pad, 1);
-        unsigned pressed = pad.buttons & ~old.buttons;
+        read_pads(&pad, &pad2);
+        unsigned pressed = pad.buttons & ~old.buttons, pressed2 = pad2.buttons & ~old2.buttons;
         old = pad;
+        old2 = pad2;
         int debug = pad.buttons & SCE_CTRL_SELECT;
         if (debug && (pressed & SCE_CTRL_START)) break;
         if (debug && (pressed & SCE_CTRL_UP)) g_show_loads = overlay = !overlay;
-        if (debug) memset(cc_keys, 0, sizeof cc_keys);
-        else map_pad(&pad);
-        // in a level, START only opens the pause menu, and SELECT (alone) is the key the HUD
-        // reads to spend a continue; Select with Start or Up stays the debug combos
-        if (ah_in_level() && !vm->overlay) {
+        int level = ah_in_level() && !vm->overlay;
+        memset(cc_keys, 0, sizeof cc_keys);
+        if (!debug) map_pad(&pad, 0, !level, 0);
+        // player 2's d-pad works the shared menu arrows, except in player 1's pause menu
+        int p1_paused = ah_paused && as_tonum(vm, cc_flash_global(vm, "g_nPausePlayer")) == 0;
+        map_pad(&pad2, 1, !level && !p1_paused, vm->overlay != NULL);   // 54 only in a menu layer
+        // In a level START is the exe's: on a port whose alien is playing it opens the pause
+        // menu for that port; on a port whose HUD is waiting (player 2's "press start" to
+        // join, or a continue after the last life) it goes to the scripts. SELECT alone is also
+        // the start key there, as the HUD's prompt shows it (for player 1, Select with Start or
+        // Up stays the debug combos). Before the scripts say which ports play, player 1's
+        // START pauses and player 2's goes to the scripts.
+        if (level) {
+            int p1 = ah_port_active(vm, 0), p2 = ah_port_active(vm, 1);
             cc_keys[K_START] = 0;
             if (debug && !(pad.buttons & (SCE_CTRL_START | SCE_CTRL_UP))) cc_keys[K_START] = 1;
+            if (p1 == 0 && !debug && (pad.buttons & SCE_CTRL_START)) cc_keys[K_START] = 1;
+            if (p2 == 1) cc_keys[PORT_KEYS[1].start] = 0;
+            // the HUD shows the start key as SELECT in a level (GetInputBinding), so player 2's
+            // SELECT joins (or continues) as well while their alien waits
+            else if (pad2.buttons & SCE_CTRL_SELECT) cc_keys[PORT_KEYS[1].start] = 1;
+            if (p1 != 0 && !debug && (pressed & SCE_CTRL_START)) ah_request_pause(vm, 0);
+            else if (p2 == 1 && (pressed2 & SCE_CTRL_START)) ah_request_pause(vm, 1);
+        } else if (!debug && (pressed & SCE_CTRL_START) && !vm->overlay) {
+            ah_request_pause(vm, 0);   // the menus read START themselves; this is for the rest
         }
-        // START in a level opens the pause menu (the exe's job in the original); the menus
-        // read START themselves
-        if (!debug && (pressed & SCE_CTRL_START) && !vm->overlay) ah_request_pause(vm, 0);
 
         SceUInt64 now = sceKernelGetProcessTimeWide();
         if (now - prev > 1000000) audio_resumed();   // a second without a frame: the app was suspended
