@@ -1,0 +1,11 @@
+name = "ahhd-scores"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ahhd-scores"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+
+[vars]
+MAX_SCORE = "20000000"   # anything higher is refused as fake

@@ -19,13 +19,21 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wall -std=gnu11")
 
 include_directories(third_party/libtess2/Include)
 
+# Online leaderboard (see server/README.md). Both empty: the build stays offline.
+# The key is the server's SCORE_KEY: pass it on the command line, never commit it.
+set(AH_LB_URL "" CACHE STRING "score server, e.g. http://ahhd-scores.example.workers.dev")
+set(AH_LB_KEY "" CACHE STRING "the score server's SCORE_KEY")
+if(AH_LB_URL AND AH_LB_KEY)
+  add_compile_definitions(AH_LB_URL="${AH_LB_URL}" AH_LB_KEY="${AH_LB_KEY}")
+endif()
+
 # Default: the game (src/ah_main.c), running the game's own scripts.
 # -DAH_VIEWER=ON: the Alien Hominid HD animation viewer (src/ah_viewer.c).
 option(AH_VIEWER "build the Alien Hominid HD animation viewer" OFF)
 if(AH_VIEWER)
   set(APP_SOURCES src/ah_viewer.c src/ah_view.c)
 else()
-  set(APP_SOURCES src/ah_main.c src/ah_host.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/strtab.c src/cc_buttons.c src/audio.c src/msadpcm.c)
+  set(APP_SOURCES src/ah_main.c src/ah_host.c src/as_core.c src/as_mc.c src/as_lib.c src/as_render.c src/cc_host.c src/cc_native.c src/hostfont.c src/strtab.c src/cc_buttons.c src/audio.c src/msadpcm.c src/ah_online.c)
 endif()
 
 add_executable(${PROJECT_NAME}
@@ -57,6 +65,12 @@ target_link_libraries(${PROJECT_NAME}
   SceCommonDialog_stub
   SceAppMgr_stub
   ScePower_stub
+  SceNet_stub
+  SceNetCtl_stub
+  SceAppUtil_stub
+  SceHttp_stub
+  SceSsl_stub
+  SceRtc_stub
   freetype
   png
   jpeg
